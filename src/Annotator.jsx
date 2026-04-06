@@ -18,6 +18,8 @@ const HINTS = [
   "Type /find to search within the document text",
   "Type /ctx to include full document context for one prompt",
   "Type @#N to link to annotation N (links survive reordering)",
+  "Use @#N+ to link and import another annotation as context",
+  "Type /attach to add a file as extra context for this thread",
   "Export as JSON, then re-import to pick up where you left off",
   "Click a highlight color dot in the sidebar to change it",
   "Highlights can overlap — click overlapping text to pick one",
@@ -37,7 +39,7 @@ async function extractPdfText(file) {
   return text;
 }
 
-async function callClaude({ messages, highlightedText, fullDoc, useContext, useWebSearch }) {
+async function callClaude({ messages, highlightedText, fullDoc, useContext, useWebSearch, linkedContext, attachments }) {
   const ctx = useContext
     ? (fullDoc.length > 6000 ? fullDoc.slice(0, 6000) + "\n…[truncated]" : fullDoc)
     : "";
@@ -45,6 +47,8 @@ async function callClaude({ messages, highlightedText, fullDoc, useContext, useW
     "You are a reading assistant. The user highlighted this passage:",
     `"${highlightedText}"`,
     useContext && ctx ? `\nFull document context:\n${ctx}` : "",
+    linkedContext ? `\nLinked annotation context:\n${linkedContext}` : "",
+    attachments?.length ? `\nAttached files:\n${attachments.map(a => `--- ${a.name} ---\n${a.content.slice(0, 4000)}`).join("\n\n")}` : "",
     "\nAnswer clearly and concisely (2-5 sentences unless more is needed).",
   ].filter(Boolean).join("\n");
   const body = {
@@ -145,21 +149,21 @@ function MiniColorPicker({ current, onChange, style }) {
 // Resolve @[id] links (and legacy @#N index links) to clickable annotation references
 function MessageContent({ content, annotations, onNavigate }) {
   const parts = [];
-  // Match @[id] (ID-based) or @#N (legacy index-based)
-  const regex = /@\[(\d+(?:\.\d+)?)\]|@#(\d+)/g;
+  // Match @[id](+)? (ID-based) or @#N(+)? (legacy index-based)
+  const regex = /@\[(\d+(?:\.\d+)?)\](\+)?|@#(\d+)(\+)?/g;
   let last = 0;
   let match;
   while ((match = regex.exec(content)) !== null) {
     if (match.index > last) parts.push(content.slice(last, match.index));
-    let anno;
+    let anno, hasPlus = false;
     if (match[1] != null) {
-      // ID-based link: @[id]
       const id = parseFloat(match[1]);
       anno = annotations.find(a => a.id === id);
+      hasPlus = match[2] === "+";
     } else {
-      // Legacy index-based link: @#N
-      const idx = parseInt(match[2]) - 1;
+      const idx = parseInt(match[3]) - 1;
       anno = annotations[idx];
+      hasPlus = match[4] === "+";
     }
     if (anno) {
       const c = COLORS[anno.color];
@@ -167,7 +171,7 @@ function MessageContent({ content, annotations, onNavigate }) {
       parts.push(
         <span key={match.index} onClick={(e) => { e.stopPropagation(); onNavigate(anno.id); }}
           style={{ color: c.border, cursor: "pointer", fontWeight: 500, borderBottom: `1px solid ${c.border}`, fontFamily: MONO, fontSize: 11 }}>
-          @{label}
+          @{label}{hasPlus && <sup style={{ fontSize: 8, opacity: 0.6 }}>ctx</sup>}
         </span>
       );
     } else {
@@ -179,13 +183,35 @@ function MessageContent({ content, annotations, onNavigate }) {
   return <span style={{ whiteSpace: "pre-wrap" }}>{parts}</span>;
 }
 
-// Convert @#N index refs to @[id] for stable linking
+// Convert @#N(+)? index refs to @[id](+)? for stable linking
 function resolveAnnoRefs(text, annotations) {
-  return text.replace(/@#(\d+)/g, (match, num) => {
+  return text.replace(/@#(\d+)(\+)?/g, (match, num, plus) => {
     const idx = parseInt(num) - 1;
     const anno = annotations[idx];
-    return anno ? `@[${anno.id}]` : match;
+    return anno ? `@[${anno.id}]${plus || ""}` : match;
   });
+}
+
+// Gather context from @[id]+ references for Claude API calls
+function gatherLinkedContext(text, annotations) {
+  const regex = /@\[(\d+(?:\.\d+)?)\]\+/g;
+  const contexts = [];
+  let m;
+  while ((m = regex.exec(text)) !== null) {
+    const id = parseFloat(m[1]);
+    const linked = annotations.find(a => a.id === id);
+    if (linked) {
+      const idx = annotations.indexOf(linked);
+      const label = linked.name || `#${idx + 1}`;
+      let ctx = `Annotation ${label}: "${linked.text}"`;
+      if (linked.thread.length > 0) {
+        const recent = linked.thread.slice(-4);
+        ctx += "\nRecent conversation:\n" + recent.map(msg => `${msg.role}: ${msg.content}`).join("\n");
+      }
+      contexts.push(ctx);
+    }
+  }
+  return contexts.join("\n\n---\n\n");
 }
 
 export default function Annotator() {
@@ -215,6 +241,10 @@ export default function Annotator() {
   const importRef = useRef(null);
   const inputRef = useRef(null);
   const threadEndRef = useRef(null);
+  const docPaneRef = useRef(null);
+  const scrollPosRef = useRef({ edit: 0, annotate: 0 });
+  const attachRef = useRef(null);
+  const attachTargetRef = useRef(null);
 
   useEffect(() => {
     const link = document.createElement("link");
@@ -250,6 +280,44 @@ export default function Annotator() {
     document.addEventListener("click", close);
     return () => document.removeEventListener("click", close);
   }, [overlapPicker]);
+
+  // Restore scroll position after mode switch
+  useEffect(() => {
+    if (docPaneRef.current) {
+      setTimeout(() => { docPaneRef.current.scrollTop = scrollPosRef.current[mode]; }, 0);
+    }
+  }, [mode]);
+
+  const switchMode = (newMode) => {
+    if (newMode === mode) return;
+    if (docPaneRef.current) scrollPosRef.current[mode] = docPaneRef.current.scrollTop;
+    setMode(newMode);
+  };
+
+  const handleAttach = (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !attachTargetRef.current) return;
+    const id = attachTargetRef.current;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const content = ev.target.result;
+      const ts = new Date().toISOString();
+      setAnnotations(prev => prev.map(a => a.id === id
+        ? {
+            ...a,
+            attachments: [...(a.attachments || []), { name: file.name, content, addedAt: ts }],
+            thread: [...a.thread, { role: "user", content: `📎 Attached: ${file.name} (${(content.length / 1024).toFixed(1)}KB)`, isComment: true, author: username, timestamp: ts, withContext: false }],
+          }
+        : a));
+    };
+    reader.readAsText(file);
+    if (attachRef.current) attachRef.current.value = "";
+  };
+
+  const scrollToAnno = (annoId) => {
+    const el = docPaneRef.current?.querySelector(`[data-anno-id="${annoId}"]`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
 
   const handlePdf = async (e) => {
     const file = e.target.files?.[0];
@@ -300,6 +368,7 @@ export default function Annotator() {
               createdAt: b.createdAt || null,
             })),
             activeBranch: -1,
+            attachments: (a.attachments || []).map(att => ({ name: att.name, content: att.content, addedAt: att.addedAt })),
           })));
         }
         setMode("annotate");
@@ -323,7 +392,7 @@ export default function Annotator() {
     const en = Math.max(startOffset, endOffset);
     const hl = doc.slice(s, en);
     if (!hl.trim()) return;
-    const newAnno = { id: Date.now(), start: s, end: en, text: hl, color: activeColor, name: "", thread: [], branches: [], activeBranch: -1 };
+    const newAnno = { id: Date.now(), start: s, end: en, text: hl, color: activeColor, name: "", thread: [], branches: [], activeBranch: -1, attachments: [] };
     setAnnotations(prev => [...prev, newAnno].sort((a, b) => a.start - b.start));
     setSelectedId(newAnno.id);
     setInputText("");
@@ -347,6 +416,7 @@ export default function Annotator() {
     if (trimmed.startsWith("/find ")) return { type: "find", content: trimmed.slice(6).trim() };
     if (trimmed.startsWith("/ctx ")) return { type: "ctx", content: trimmed.slice(5).trim() };
     if (trimmed === "/ctx") return { type: "ctx", content: "" };
+    if (trimmed === "/attach") return { type: "attach", content: "" };
     return { type: "ask", content: trimmed };
   };
 
@@ -389,6 +459,13 @@ export default function Annotator() {
 
     if (parsed.type === "find") { handleFind(id, parsed.content); setInputText(""); return; }
 
+    if (parsed.type === "attach") {
+      attachTargetRef.current = id;
+      attachRef.current?.click();
+      setInputText("");
+      return;
+    }
+
     const doWebSearch = parsed.type === "search";
     const withContext = parsed.type === "ctx";
     const userContent = parsed.content;
@@ -408,8 +485,11 @@ export default function Annotator() {
     }
     if (apiMessages.length > 0 && apiMessages[0].role !== "user") apiMessages.shift();
 
+    const linked = gatherLinkedContext(prefix + userContent, annotations);
+    const attachments = anno.attachments || [];
+
     try {
-      const answer = await callClaude({ messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: withContext, useWebSearch: doWebSearch });
+      const answer = await callClaude({ messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: withContext, useWebSearch: doWebSearch, linkedContext: linked, attachments });
       setAnnotations(prev => prev.map(a => a.id === id
         ? { ...a, thread: [...a.thread, { role: "assistant", content: answer, author: "Claude", timestamp: new Date().toISOString() }] }
         : a));
@@ -539,6 +619,7 @@ export default function Annotator() {
       exported: new Date().toISOString(),
       annotations: annotations.map((a, i) => ({
         id: a.id, index: i + 1, name: a.name || "", color: COLORS[a.color].name, charRange: [a.start, a.end], highlightedText: a.text,
+        attachments: (a.attachments || []).map(att => ({ name: att.name, content: att.content, addedAt: att.addedAt })),
         thread: a.thread.map(m => ({ role: m.isComment ? "comment" : m.role, content: m.content, author: m.author || "", timestamp: m.timestamp || null, withContext: m.withContext || false })),
         branches: a.branches.map(b => ({
           createdAt: b.createdAt,
@@ -685,7 +766,7 @@ export default function Annotator() {
     }
 
     return (
-      <span key={`h-${offset}`} onClick={handleClick}
+      <span key={`h-${offset}`} data-anno-id={primary.id} onClick={handleClick}
         style={{
           background: bg, borderBottom, borderRadius: 2, cursor: "pointer",
           padding: "1px 0", transition: "all 0.15s ease",
@@ -710,6 +791,7 @@ export default function Annotator() {
     { cmd: "/search", desc: "ask + web search" },
     { cmd: "/find", desc: "search in document" },
     { cmd: "/ctx", desc: "ask with full doc context" },
+    { cmd: "/attach", desc: "attach a file as context" },
   ];
 
   const getAnnoLabel = (a, i) => a.name || `#${i + 1}`;
@@ -745,6 +827,7 @@ export default function Annotator() {
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
           <input ref={fileRef} type="file" accept=".pdf" onChange={handlePdf} style={{ display: "none" }} />
           <input ref={importRef} type="file" accept=".json" onChange={handleImport} style={{ display: "none" }} />
+          <input ref={attachRef} type="file" onChange={handleAttach} style={{ display: "none" }} />
           <button onClick={() => fileRef.current?.click()} disabled={!pdfReady || pdfLoading}
             style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #d4d0c8", background: pdfLoading ? "#FEF3C7" : "transparent", cursor: pdfReady ? "pointer" : "not-allowed", fontFamily: MONO, fontSize: 11, opacity: pdfReady ? 1 : 0.4 }}>
             {pdfLoading ? "⏳…" : "📎 PDF"}
@@ -755,7 +838,7 @@ export default function Annotator() {
           </button>
           <div style={{ display: "flex", borderRadius: 7, overflow: "hidden", border: "1px solid #d4d0c8" }}>
             {["edit", "annotate"].map(m => (
-              <button key={m} onClick={() => setMode(m)}
+              <button key={m} onClick={() => switchMode(m)}
                 style={{ padding: "5px 10px", border: "none", cursor: "pointer", fontFamily: MONO, fontSize: 11, background: mode === m ? "#1a1a1a" : "transparent", color: mode === m ? "#fff" : "#1a1a1a", transition: "all 0.15s" }}>
                 {m === "edit" ? "✏️ Edit" : "🖍️ Annotate"}
               </button>
@@ -791,7 +874,7 @@ export default function Annotator() {
       {/* Body */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }} onClick={() => { showExportMenu && setShowExportMenu(false); }}>
         {/* Document pane */}
-        <div style={{ flex: 1, overflowY: "auto", padding: 24, position: "relative" }}>
+        <div ref={docPaneRef} style={{ flex: 1, overflowY: "auto", padding: 24, position: "relative" }}>
           {mode === "edit" ? (
             <textarea value={doc} onChange={e => { setDoc(e.target.value); setAnnotations([]); }}
               placeholder="Paste your document text here, or upload a PDF…"
@@ -888,9 +971,16 @@ export default function Annotator() {
                         <button onClick={() => deleteAnno(currentAnno.id)} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid #fca5a5", background: "#fef2f2", color: "#b91c1c", fontSize: 10, fontFamily: MONO, cursor: "pointer", marginLeft: 4 }}>✕</button>
                       </div>
                     </div>
-                    <p style={{ fontSize: 13, fontStyle: "italic", margin: 0, color: c.text, lineHeight: 1.6, maxHeight: 120, overflowY: "auto" }}>
-                      "{currentAnno.text}"
-                    </p>
+                    <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+                      <p style={{ fontSize: 13, fontStyle: "italic", margin: 0, color: c.text, lineHeight: 1.6, maxHeight: 120, overflowY: "auto", flex: 1 }}>
+                        "{currentAnno.text}"
+                      </p>
+                      <button onClick={() => scrollToAnno(currentAnno.id)} title="Jump to highlight in document"
+                        style={{ padding: "3px 7px", borderRadius: 4, border: `1px solid ${c.border}40`, background: "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11, flexShrink: 0, opacity: 0.5, transition: "opacity 0.15s" }}
+                        onMouseEnter={e => e.currentTarget.style.opacity = 1} onMouseLeave={e => e.currentTarget.style.opacity = 0.5}>
+                        ⎈
+                      </button>
+                    </div>
                   </div>
 
                   {/* Branch switcher */}
@@ -915,6 +1005,19 @@ export default function Annotator() {
                           }}>
                           v{bi + 1}
                         </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Attachments bar */}
+                  {(currentAnno.attachments || []).length > 0 && (
+                    <div style={{ padding: "6px 16px", borderBottom: "1px solid #e5e2db", display: "flex", gap: 4, alignItems: "center", flexShrink: 0, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 10, fontFamily: MONO, opacity: 0.4, flexShrink: 0 }}>📎</span>
+                      {currentAnno.attachments.map((att, ai) => (
+                        <span key={ai} title={`${att.name} — ${(att.content.length / 1024).toFixed(1)}KB\nAttached ${new Date(att.addedAt).toLocaleString()}`}
+                          style={{ padding: "2px 6px", borderRadius: 4, background: "#f7f6f3", border: "1px solid #e5e2db", fontSize: 10, fontFamily: MONO }}>
+                          {att.name}
+                        </span>
                       ))}
                     </div>
                   )}
@@ -1014,7 +1117,7 @@ export default function Annotator() {
                       <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
                         <AutoTextarea inputRef={inputRef} value={inputText} onChange={e => setInputText(e.target.value)}
                           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(currentAnno.id); } }}
-                          placeholder={currentThread.length ? "Follow up, /ctx, /skip, /search, /find, @#N…" : "Ask about this passage… (/ctx for full doc)"} />
+                          placeholder={currentThread.length ? "Follow up, /ctx, /skip, /search, /find, /attach, @#N…" : "Ask about this passage… (/ctx for full doc)"} />
                         <button onClick={() => sendMessage(currentAnno.id)}
                           disabled={!inputText.trim() || loadingId === currentAnno.id}
                           style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: inputText.trim() ? c.border : "#ddd", color: "#fff", fontFamily: MONO, fontSize: 12, cursor: inputText.trim() ? "pointer" : "default", transition: "all 0.15s", flexShrink: 0, marginBottom: 1 }}>↵</button>

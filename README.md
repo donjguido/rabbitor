@@ -10,7 +10,10 @@ AI-powered document annotation tool. Highlight passages in any text or PDF, then
 - **Overlapping Highlights** — Highlights can overlap; click overlapping text to pick which annotation to view
 - **Branching Edits** — Edit a user message and choose "Branch + Regen" to save the old thread as a branch and get a fresh AI response. Switch between branches with the tab bar. Plain "Save" edits in place without branching
 - **Per-prompt Context** — Use `/ctx your question` to include full document context for that specific prompt. Without it, only the highlighted passage is sent
-- **Annotation Linking** — Type `@#N` in any message to create a clickable link to annotation N (e.g. `@#3`). Links show the annotation name if one is set
+- **Annotation Linking** — Type `@#N` in any message to create a clickable link to annotation N (e.g. `@#3`). Links show the annotation name if one is set. Use `@#N+` to link *and* import that annotation's text and recent conversation as context for Claude
+- **File Attachments** — Type `/attach` to add a file as extra context for an annotation thread. Attached file contents are sent to Claude with each prompt
+- **Jump to Highlight** — Click the locate button (⎈) next to the highlighted passage in the sidebar to scroll the document to that highlight
+- **Scroll Position Memory** — Switching between Edit and Annotate modes preserves your scroll position in each
 - **Rename Annotations** — Double-click the annotation name in the sidebar header to give it a custom name
 - **PDF Upload** — Extract and annotate text from PDF files
 - **Threaded Conversations** — Each highlight has its own chat thread
@@ -19,6 +22,7 @@ AI-powered document annotation tool. Highlight passages in any text or PDF, then
   - `/skip` — Leave a comment without calling Claude
   - `/search` — Ask Claude with web search enabled
   - `/find` — Search within the document text
+  - `/attach` — Attach a file as context for this annotation
 - **Multi-color Highlights** — 5 color options (Lemon, Rose, Sky, Mint, Lilac) with per-annotation color switching
 - **Export** — Copy to clipboard, download as Markdown, or download as JSON
 - **Import/Export JSON** — Save your session (including branches) and pick up where you left off
@@ -62,9 +66,10 @@ Open [http://localhost:5173](http://localhost:5173).
 3. **Highlight** — Select text to create a color-coded annotation (overlaps are fine)
 4. **Ask** — Type a question in the sidebar and press Enter
 5. **Add context** — Prefix with `/ctx` to include the full document
-6. **Link annotations** — Reference other annotations with `@#1`, `@#2`, etc.
-7. **Branch** — Edit a message and click "Branch + Regen" to explore alternate responses
-8. **Export** — Use the Export menu to save your work
+6. **Link annotations** — Reference other annotations with `@#1`, `@#2`, etc. Add `+` (e.g. `@#1+`) to also import that annotation's context
+7. **Attach files** — Type `/attach` to add reference files to an annotation thread
+8. **Branch** — Edit a message and click "Branch + Regen" to explore alternate responses
+9. **Export** — Use the Export menu to save your work
 
 ## Tech Stack
 
