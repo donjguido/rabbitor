@@ -365,6 +365,7 @@ export default function Annotator() {
     return s || { provider: "anthropic", apiKey: "", model: PROVIDERS[0].defaultModel, baseUrl: "" };
   });
   const [settingsStatus, setSettingsStatus] = useState("");
+  const [annoMentionIdx, setAnnoMentionIdx] = useState(0);
   const textRef = useRef(null);
   const fileRef = useRef(null);
   const importRef = useRef(null);
@@ -939,6 +940,48 @@ export default function Annotator() {
 
   const getAnnoLabel = (a, i) => a.name || `#${i + 1}`;
 
+  // Annotation mention autocomplete: detect @# pattern at cursor
+  const getAnnoMention = () => {
+    const el = inputRef.current;
+    if (!el || annotations.length === 0) return null;
+    const pos = el.selectionStart;
+    const before = inputText.slice(0, pos);
+    const match = before.match(/@#(\d*)(\+)?$/);
+    if (!match) return null;
+    const query = match[1]; // digits typed so far (may be empty)
+    const startPos = before.length - match[0].length;
+    const filtered = annotations.map((a, i) => ({ anno: a, idx: i, label: getAnnoLabel(a, i) }))
+      .filter(item => item.anno.id !== (currentAnno?.id ?? null)) // exclude current annotation
+      .filter(item => {
+        if (!query) return true;
+        const num = String(item.idx + 1);
+        const name = (item.anno.name || "").toLowerCase();
+        return num.startsWith(query) || name.includes(query.toLowerCase());
+      });
+    return filtered.length > 0 ? { items: filtered, startPos, fullMatch: match[0] } : null;
+  };
+  const annoMention = getAnnoMention();
+
+  // Reset highlight index when suggestions change
+  useEffect(() => {
+    setAnnoMentionIdx(0);
+  }, [annoMention?.items?.length, annoMention?.startPos]);
+
+  const insertAnnoMention = (item, plus = false) => {
+    const mention = annoMention;
+    if (!mention) return;
+    const replacement = `@#${item.idx + 1}${plus ? "+" : ""} `;
+    const newText = inputText.slice(0, mention.startPos) + replacement + inputText.slice(inputRef.current?.selectionStart ?? inputText.length);
+    setInputText(newText);
+    setTimeout(() => {
+      if (inputRef.current) {
+        const newPos = mention.startPos + replacement.length;
+        inputRef.current.selectionStart = inputRef.current.selectionEnd = newPos;
+        inputRef.current.focus();
+      }
+    }, 0);
+  };
+
   return (
     <div style={{ fontFamily: FONT, height: "100vh", display: "flex", flexDirection: "column", background: "#FAF9F6", color: "#1a1a1a" }}>
       {/* Header */}
@@ -1348,12 +1391,49 @@ export default function Annotator() {
                     </div>
                   )}
 
+                  {/* Annotation mention autocomplete */}
+                  {!isViewingBranch && annoMention && (
+                    <div style={{ padding: "6px 16px", borderTop: "1px solid #f0ede8", background: "#faf9f6", flexShrink: 0, maxHeight: 160, overflowY: "auto" }}>
+                      <div style={{ fontSize: 10, fontFamily: MONO, opacity: 0.35, marginBottom: 4 }}>Link annotation — ↵ select · Tab select with context (+) · Esc dismiss</div>
+                      {annoMention.items.map((item, i) => {
+                        const ac = COLORS[item.anno.color];
+                        const isHighlighted = i === annoMentionIdx;
+                        return (
+                          <div key={item.anno.id}
+                            onClick={() => insertAnnoMention(item)}
+                            onMouseEnter={() => setAnnoMentionIdx(i)}
+                            style={{
+                              padding: "5px 8px", fontSize: 12, fontFamily: MONO, cursor: "pointer", display: "flex", gap: 8, alignItems: "center",
+                              borderRadius: 4, background: isHighlighted ? ac.bg : "transparent", transition: "background 0.1s",
+                            }}>
+                            <span style={{ width: 7, height: 7, borderRadius: "50%", background: ac.border, flexShrink: 0 }} />
+                            <span style={{ fontWeight: 500, color: ac.border }}>@#{item.idx + 1}</span>
+                            <span style={{ opacity: 0.5, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {item.anno.name || `"${item.anno.text.slice(0, 50)}${item.anno.text.length > 50 ? "…" : ""}"`}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   {/* Input (hidden when viewing a branch) */}
                   {!isViewingBranch && (
                     <div style={{ padding: "10px 16px 14px", borderTop: "1px solid #e5e2db", flexShrink: 0 }}>
                       <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
                         <AutoTextarea inputRef={inputRef} value={inputText} onChange={e => setInputText(e.target.value)}
-                          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(currentAnno.id); } }}
+                          onKeyDown={e => {
+                            if (annoMention) {
+                              const items = annoMention.items;
+                              if (e.key === "ArrowDown") { e.preventDefault(); setAnnoMentionIdx(i => (i + 1) % items.length); }
+                              else if (e.key === "ArrowUp") { e.preventDefault(); setAnnoMentionIdx(i => (i - 1 + items.length) % items.length); }
+                              else if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); insertAnnoMention(items[annoMentionIdx]); }
+                              else if (e.key === "Tab") { e.preventDefault(); insertAnnoMention(items[annoMentionIdx], true); }
+                              else if (e.key === "Escape") { e.preventDefault(); setInputText(inputText.slice(0, annoMention.startPos) + inputText.slice(annoMention.startPos + annoMention.fullMatch.length)); }
+                              return;
+                            }
+                            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(currentAnno.id); }
+                          }}
                           placeholder="" />
                         <button onClick={() => sendMessage(currentAnno.id)}
                           disabled={!inputText.trim() || loadingId === currentAnno.id}
