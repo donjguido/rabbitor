@@ -36,20 +36,22 @@ cd annotator
 npm install
 ```
 
-### API Key
+### AI Provider
 
-The app calls the Claude API directly from the browser. You'll need to configure your Anthropic API key. The `callClaude` function in `src/Annotator.jsx` makes requests to `https://api.anthropic.com/v1/messages` — you can either:
+On first launch, the app opens a **Settings** panel (gear icon in the header) where you configure your AI provider. Supported providers:
 
-1. **Add a proxy** that injects your API key server-side (recommended for production)
-2. **Modify the fetch headers** to include your key for local development:
-   ```js
-   headers: {
-     "Content-Type": "application/json",
-     "x-api-key": "YOUR_API_KEY",
-     "anthropic-version": "2023-06-01",
-     "anthropic-dangerous-direct-browser-access": "true",
-   }
-   ```
+| Provider | API Key | Notes |
+|----------|---------|-------|
+| **Anthropic (Claude)** | Required | Full feature support including `/search` (web search) |
+| **OpenAI** | Required | GPT-4o, etc. |
+| **Google Gemini** | Required | Gemini 2.0 Flash, etc. |
+| **OpenRouter** | Required | Access to many models via single key |
+| **Ollama (local)** | Not needed | Runs on `localhost:11434` — no internet required |
+| **Custom (OpenAI-compatible)** | Optional | Any OpenAI-compatible endpoint (LM Studio, vLLM, llama.cpp, etc.) |
+
+Settings are saved to `localStorage` — you only configure once per browser.
+
+> **Local models (Ollama, Custom):** These don't need an API key or internet access. Just make sure your local model server is running before using the app. Web search (`/search`) is unavailable with local models.
 
 ### Run
 

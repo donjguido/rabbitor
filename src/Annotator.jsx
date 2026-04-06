@@ -39,11 +39,81 @@ async function extractPdfText(file) {
   return text;
 }
 
-async function callClaude({ messages, highlightedText, fullDoc, useContext, useWebSearch, linkedContext, attachments }) {
-  const ctx = useContext
-    ? (fullDoc.length > 6000 ? fullDoc.slice(0, 6000) + "\n…[truncated]" : fullDoc)
-    : "";
-  const systemParts = [
+// --- AI Provider infrastructure ---
+const PROVIDERS = [
+  { id: "anthropic", name: "Anthropic (Claude)", defaultModel: "claude-sonnet-4-20250514", needsKey: true, supportsSearch: true },
+  { id: "openai", name: "OpenAI", defaultModel: "gpt-4o", defaultUrl: "https://api.openai.com", needsKey: true },
+  { id: "google", name: "Google Gemini", defaultModel: "gemini-2.0-flash", needsKey: true },
+  { id: "openrouter", name: "OpenRouter", defaultModel: "anthropic/claude-sonnet-4", defaultUrl: "https://openrouter.ai/api", needsKey: true },
+  { id: "ollama", name: "Ollama (local)", defaultModel: "llama3.2", defaultUrl: "http://localhost:11434", needsKey: false },
+  { id: "custom", name: "Custom (OpenAI-compatible)", defaultModel: "", defaultUrl: "http://localhost:8000", needsKey: false },
+];
+
+const SETTINGS_KEY = "annotator_ai_settings";
+function loadAISettings() {
+  try { const s = JSON.parse(localStorage.getItem(SETTINGS_KEY)); if (s?.provider) return s; } catch {} return null;
+}
+function saveAISettings(s) { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
+
+async function callAnthropic(apiKey, model, messages, system, useWebSearch) {
+  const body = { model, max_tokens: 1000, system, messages };
+  if (useWebSearch) body.tools = [{ type: "web_search_20250305", name: "web_search" }];
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  return data.content?.filter(b => b.type === "text").map(b => b.text).join("\n") || "No response.";
+}
+
+async function callOpenAICompat(baseUrl, apiKey, model, messages, system) {
+  const allMessages = [{ role: "system", content: system }, ...messages];
+  const headers = { "Content-Type": "application/json" };
+  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+  const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/v1/chat/completions`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ model, messages: allMessages, max_tokens: 1000 }),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+  return data.choices?.[0]?.message?.content || "No response.";
+}
+
+async function callGemini(apiKey, model, messages, system) {
+  const contents = messages.map(m => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts: [{ text: m.content }],
+  }));
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: system }] },
+        contents,
+        generationConfig: { maxOutputTokens: 1000 },
+      }),
+    }
+  );
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  return data.candidates?.[0]?.content?.parts?.map(p => p.text).join("\n") || "No response.";
+}
+
+async function callAI(settings, { messages, highlightedText, fullDoc, useContext, useWebSearch, linkedContext, attachments }) {
+  if (!settings?.provider) throw new Error("No AI provider configured — open Settings (gear icon) to set up.");
+
+  const ctx = useContext ? (fullDoc.length > 6000 ? fullDoc.slice(0, 6000) + "\n…[truncated]" : fullDoc) : "";
+  const system = [
     "You are a reading assistant. The user highlighted this passage:",
     `"${highlightedText}"`,
     useContext && ctx ? `\nFull document context:\n${ctx}` : "",
@@ -51,20 +121,18 @@ async function callClaude({ messages, highlightedText, fullDoc, useContext, useW
     attachments?.length ? `\nAttached files:\n${attachments.map(a => `--- ${a.name} ---\n${a.content.slice(0, 4000)}`).join("\n\n")}` : "",
     "\nAnswer clearly and concisely (2-5 sentences unless more is needed).",
   ].filter(Boolean).join("\n");
-  const body = {
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 1000,
-    system: systemParts,
-    messages,
-  };
-  if (useWebSearch) body.tools = [{ type: "web_search_20250305", name: "web_search" }];
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  return data.content?.filter(b => b.type === "text").map(b => b.text).join("\n") || "No response.";
+
+  const { provider, apiKey, model, baseUrl } = settings;
+  const prov = PROVIDERS.find(p => p.id === provider);
+
+  if (provider === "anthropic") return callAnthropic(apiKey, model, messages, system, useWebSearch && prov?.supportsSearch);
+  if (provider === "google") return callGemini(apiKey, model, messages, system);
+
+  // OpenAI, OpenRouter, Ollama, Custom — all OpenAI-compatible
+  const url = provider === "openai" ? "https://api.openai.com"
+    : provider === "openrouter" ? "https://openrouter.ai/api"
+    : baseUrl || prov?.defaultUrl || "http://localhost:11434";
+  return callOpenAICompat(url, apiKey, model, messages, system);
 }
 
 function downloadFile(content, filename, mime) {
@@ -236,6 +304,13 @@ export default function Annotator() {
   const [overlapPicker, setOverlapPicker] = useState(null); // { x, y, ids: [] }
   const [renamingId, setRenamingId] = useState(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [aiSettings, setAiSettings] = useState(() => loadAISettings());
+  const [showSettings, setShowSettings] = useState(() => !loadAISettings());
+  const [settingsDraft, setSettingsDraft] = useState(() => {
+    const s = loadAISettings();
+    return s || { provider: "anthropic", apiKey: "", model: PROVIDERS[0].defaultModel, baseUrl: "" };
+  });
+  const [settingsStatus, setSettingsStatus] = useState("");
   const textRef = useRef(null);
   const fileRef = useRef(null);
   const importRef = useRef(null);
@@ -489,13 +564,14 @@ export default function Annotator() {
     const attachments = anno.attachments || [];
 
     try {
-      const answer = await callClaude({ messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: withContext, useWebSearch: doWebSearch, linkedContext: linked, attachments });
+      const answer = await callAI(aiSettings, { messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: withContext, useWebSearch: doWebSearch, linkedContext: linked, attachments });
+      const aiName = PROVIDERS.find(p => p.id === aiSettings?.provider)?.name?.split(" ")[0] || "AI";
       setAnnotations(prev => prev.map(a => a.id === id
-        ? { ...a, thread: [...a.thread, { role: "assistant", content: answer, author: "Claude", timestamp: new Date().toISOString() }] }
+        ? { ...a, thread: [...a.thread, { role: "assistant", content: answer, author: aiName, timestamp: new Date().toISOString() }] }
         : a));
-    } catch {
+    } catch (err) {
       setAnnotations(prev => prev.map(a => a.id === id
-        ? { ...a, thread: [...a.thread, { role: "assistant", content: "Error getting response.", author: "Claude", timestamp: new Date().toISOString() }] }
+        ? { ...a, thread: [...a.thread, { role: "assistant", content: err?.message || "Error getting response.", author: "AI", timestamp: new Date().toISOString() }] }
         : a));
     }
     setLoadingId(null);
@@ -542,13 +618,14 @@ export default function Annotator() {
       if (apiMessages.length > 0 && apiMessages[0].role !== "user") apiMessages.shift();
 
       try {
-        const answer = await callClaude({ messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: editedMsg.withContext || false, useWebSearch: false });
+        const answer = await callAI(aiSettings, { messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: editedMsg.withContext || false, useWebSearch: false });
+        const aiName = PROVIDERS.find(p => p.id === aiSettings?.provider)?.name?.split(" ")[0] || "AI";
         setAnnotations(prev => prev.map(a => a.id === annoId
-          ? { ...a, thread: [...a.thread, { role: "assistant", content: answer, author: "Claude", timestamp: new Date().toISOString() }] }
+          ? { ...a, thread: [...a.thread, { role: "assistant", content: answer, author: aiName, timestamp: new Date().toISOString() }] }
           : a));
-      } catch {
+      } catch (err) {
         setAnnotations(prev => prev.map(a => a.id === annoId
-          ? { ...a, thread: [...a.thread, { role: "assistant", content: "Error getting response.", author: "Claude", timestamp: new Date().toISOString() }] }
+          ? { ...a, thread: [...a.thread, { role: "assistant", content: err?.message || "Error getting response.", author: "AI", timestamp: new Date().toISOString() }] }
           : a));
       }
       setLoadingId(null);
@@ -868,8 +945,102 @@ export default function Annotator() {
               )}
             </div>
           )}
+          <button onClick={() => { setSettingsDraft(aiSettings || { provider: "anthropic", apiKey: "", model: PROVIDERS[0].defaultModel, baseUrl: "" }); setSettingsStatus(""); setShowSettings(true); }}
+            title="AI Provider Settings"
+            style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${aiSettings ? "#d4d0c8" : "#f59e0b"}`, background: aiSettings ? "transparent" : "#FEF3C7", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
+            ⚙️{aiSettings ? "" : " Setup AI"}
+          </button>
         </div>
       </div>
+
+      {/* Settings modal */}
+      {showSettings && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setShowSettings(false)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 24, width: 420, maxHeight: "80vh", overflowY: "auto", boxShadow: "0 8px 30px rgba(0,0,0,0.15)", fontFamily: FONT }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h2 style={{ margin: 0, fontSize: 16 }}>AI Provider Settings</h2>
+              <button onClick={() => setShowSettings(false)} style={{ border: "none", background: "transparent", fontSize: 16, cursor: "pointer", opacity: 0.4 }}>✕</button>
+            </div>
+
+            <label style={{ display: "block", fontSize: 11, fontFamily: MONO, opacity: 0.5, marginBottom: 4, textTransform: "uppercase" }}>Provider</label>
+            <select value={settingsDraft.provider} onChange={e => {
+              const p = PROVIDERS.find(x => x.id === e.target.value);
+              setSettingsDraft(prev => ({ ...prev, provider: e.target.value, model: p?.defaultModel || "", baseUrl: p?.defaultUrl || prev.baseUrl }));
+              setSettingsStatus("");
+            }}
+              style={{ width: "100%", padding: "8px 10px", fontFamily: MONO, fontSize: 12, border: "1px solid #d4d0c8", borderRadius: 6, marginBottom: 12, outline: "none", background: "#fff" }}>
+              {PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+
+            {PROVIDERS.find(p => p.id === settingsDraft.provider)?.needsKey && (
+              <>
+                <label style={{ display: "block", fontSize: 11, fontFamily: MONO, opacity: 0.5, marginBottom: 4, textTransform: "uppercase" }}>API Key</label>
+                <input type="password" value={settingsDraft.apiKey || ""} onChange={e => { setSettingsDraft(prev => ({ ...prev, apiKey: e.target.value })); setSettingsStatus(""); }}
+                  placeholder={`Enter your ${PROVIDERS.find(p => p.id === settingsDraft.provider)?.name} API key`}
+                  style={{ width: "100%", padding: "8px 10px", fontFamily: MONO, fontSize: 12, border: "1px solid #d4d0c8", borderRadius: 6, marginBottom: 12, outline: "none", boxSizing: "border-box" }} />
+              </>
+            )}
+
+            <label style={{ display: "block", fontSize: 11, fontFamily: MONO, opacity: 0.5, marginBottom: 4, textTransform: "uppercase" }}>Model</label>
+            <input value={settingsDraft.model || ""} onChange={e => { setSettingsDraft(prev => ({ ...prev, model: e.target.value })); setSettingsStatus(""); }}
+              placeholder="Model name"
+              style={{ width: "100%", padding: "8px 10px", fontFamily: MONO, fontSize: 12, border: "1px solid #d4d0c8", borderRadius: 6, marginBottom: 12, outline: "none", boxSizing: "border-box" }} />
+
+            {(settingsDraft.provider === "ollama" || settingsDraft.provider === "custom") && (
+              <>
+                <label style={{ display: "block", fontSize: 11, fontFamily: MONO, opacity: 0.5, marginBottom: 4, textTransform: "uppercase" }}>Base URL</label>
+                <input value={settingsDraft.baseUrl || ""} onChange={e => { setSettingsDraft(prev => ({ ...prev, baseUrl: e.target.value })); setSettingsStatus(""); }}
+                  placeholder="http://localhost:11434"
+                  style={{ width: "100%", padding: "8px 10px", fontFamily: MONO, fontSize: 12, border: "1px solid #d4d0c8", borderRadius: 6, marginBottom: 12, outline: "none", boxSizing: "border-box" }} />
+              </>
+            )}
+
+            {!PROVIDERS.find(p => p.id === settingsDraft.provider)?.supportsSearch && (
+              <p style={{ fontSize: 11, fontFamily: MONO, opacity: 0.4, margin: "0 0 12px", lineHeight: 1.5 }}>
+                Note: /search (web search) is only available with Anthropic. Other providers will ignore it.
+              </p>
+            )}
+
+            {settingsStatus && (
+              <div style={{ padding: "8px 10px", borderRadius: 6, marginBottom: 12, fontSize: 11, fontFamily: MONO,
+                background: settingsStatus.startsWith("✓") ? "#D1FAE5" : settingsStatus.startsWith("✕") ? "#FEE2E2" : "#FEF3C7",
+                border: `1px solid ${settingsStatus.startsWith("✓") ? "#6EE7B7" : settingsStatus.startsWith("✕") ? "#FCA5A5" : "#FCD34D"}`,
+              }}>
+                {settingsStatus}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={async () => {
+                setSettingsStatus("Testing…");
+                try {
+                  await callAI(settingsDraft, {
+                    messages: [{ role: "user", content: "Say 'OK' and nothing else." }],
+                    highlightedText: "test", fullDoc: "", useContext: false, useWebSearch: false,
+                  });
+                  setSettingsStatus("✓ Connection successful!");
+                } catch (err) {
+                  setSettingsStatus(`✕ ${err.message}`);
+                }
+              }}
+                style={{ padding: "8px 14px", borderRadius: 6, border: "1px solid #d4d0c8", background: "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
+                Test Connection
+              </button>
+              <button onClick={() => {
+                setAiSettings(settingsDraft);
+                saveAISettings(settingsDraft);
+                setShowSettings(false);
+                setSettingsStatus("");
+              }}
+                style={{ padding: "8px 14px", borderRadius: 6, border: "none", background: "#1a1a1a", color: "#fff", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Body */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }} onClick={() => { showExportMenu && setShowExportMenu(false); }}>
