@@ -7,16 +7,21 @@ AI-powered document annotation tool. Highlight passages in any text or PDF, then
 ## Features
 
 - **Highlight & Ask** — Select any passage to create a color-coded annotation, then ask Claude about it
+- **Overlapping Highlights** — Highlights can overlap; click overlapping text to pick which annotation to view
+- **Branching Edits** — Edit a user message and choose "Branch + Regen" to save the old thread as a branch and get a fresh AI response. Switch between branches with the tab bar. Plain "Save" edits in place without branching
+- **Per-prompt Context** — Use `/ctx your question` to include full document context for that specific prompt. Without it, only the highlighted passage is sent
+- **Annotation Linking** — Type `@#N` in any message to create a clickable link to annotation N (e.g. `@#3`). Links show the annotation name if one is set
+- **Rename Annotations** — Double-click the annotation name in the sidebar header to give it a custom name
 - **PDF Upload** — Extract and annotate text from PDF files
-- **Threaded Conversations** — Each highlight has its own chat thread with full context
+- **Threaded Conversations** — Each highlight has its own chat thread
 - **Slash Commands**
+  - `/ctx` — Include full document context for this prompt
   - `/skip` — Leave a comment without calling Claude
   - `/search` — Ask Claude with web search enabled
   - `/find` — Search within the document text
-- **Context Control** — Toggle between sending the full document or just the highlighted passage to Claude
 - **Multi-color Highlights** — 5 color options (Lemon, Rose, Sky, Mint, Lilac) with per-annotation color switching
 - **Export** — Copy to clipboard, download as Markdown, or download as JSON
-- **Import/Export JSON** — Save your session and pick up where you left off
+- **Import/Export JSON** — Save your session (including branches) and pick up where you left off
 - **Usernames** — Set your name for tracked annotations across collaborators
 
 ## Setup
@@ -54,9 +59,12 @@ Open [http://localhost:5173](http://localhost:5173).
 
 1. **Paste or upload** — Paste text in Edit mode or upload a PDF
 2. **Switch to Annotate** — Click the Annotate toggle
-3. **Highlight** — Select text to create a color-coded annotation
+3. **Highlight** — Select text to create a color-coded annotation (overlaps are fine)
 4. **Ask** — Type a question in the sidebar and press Enter
-5. **Export** — Use the Export menu to save your work
+5. **Add context** — Prefix with `/ctx` to include the full document
+6. **Link annotations** — Reference other annotations with `@#1`, `@#2`, etc.
+7. **Branch** — Edit a message and click "Branch + Regen" to explore alternate responses
+8. **Export** — Use the Export menu to save your work
 
 ## Tech Stack
 

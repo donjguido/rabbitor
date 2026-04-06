@@ -16,10 +16,12 @@ const HINTS = [
   "Type /skip to leave a comment without asking Claude",
   "Type /search to ask Claude with web search enabled",
   "Type /find to search within the document text",
-  "Toggle full-ctx/passage to control how much context Claude sees",
+  "Type /ctx to include full document context for one prompt",
+  "Type @#N in a message to link to annotation N",
   "Export as JSON, then re-import to pick up where you left off",
   "Click a highlight color dot in the sidebar to change it",
-  "Set your username in the header for tracked annotations",
+  "Highlights can overlap — click overlapping text to pick one",
+  "Double-click an annotation name to rename it",
 ];
 
 async function extractPdfText(file) {
@@ -78,7 +80,7 @@ function getTextOffset(container, targetNode, targetOffset) {
     acceptNode: (node) => {
       let el = node.parentElement;
       while (el && el !== container) {
-        if (el.tagName === "SUP" && el.dataset.badge === "true") return NodeFilter.FILTER_REJECT;
+        if (el.dataset.badge === "true") return NodeFilter.FILTER_REJECT;
         el = el.parentElement;
       }
       return NodeFilter.FILTER_ACCEPT;
@@ -140,6 +142,33 @@ function MiniColorPicker({ current, onChange, style }) {
   );
 }
 
+// Renders message content with @#N links to other annotations
+function MessageContent({ content, annotations, onNavigate }) {
+  const parts = [];
+  const regex = /@#(\d+)/g;
+  let last = 0;
+  let match;
+  while ((match = regex.exec(content)) !== null) {
+    if (match.index > last) parts.push(content.slice(last, match.index));
+    const idx = parseInt(match[1]) - 1;
+    const anno = annotations[idx];
+    if (anno) {
+      const c = COLORS[anno.color];
+      parts.push(
+        <span key={match.index} onClick={(e) => { e.stopPropagation(); onNavigate(anno.id); }}
+          style={{ color: c.border, cursor: "pointer", fontWeight: 500, borderBottom: `1px solid ${c.border}`, fontFamily: MONO, fontSize: 11 }}>
+          @#{match[1]}{anno.name ? ` ${anno.name}` : ""}
+        </span>
+      );
+    } else {
+      parts.push(match[0]);
+    }
+    last = regex.lastIndex;
+  }
+  if (last < content.length) parts.push(content.slice(last));
+  return <span style={{ whiteSpace: "pre-wrap" }}>{parts}</span>;
+}
+
 export default function Annotator() {
   const [doc, setDoc] = useState("");
   const [fileName, setFileName] = useState("");
@@ -154,12 +183,14 @@ export default function Annotator() {
   const [pdfReady, setPdfReady] = useState(false);
   const [editingNote, setEditingNote] = useState(null);
   const [editText, setEditText] = useState("");
-  const [useContext, setUseContext] = useState(true);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [username, setUsername] = useState("");
   const [showUserEdit, setShowUserEdit] = useState(false);
   const [userDraft, setUserDraft] = useState("");
   const [hintIdx, setHintIdx] = useState(0);
+  const [overlapPicker, setOverlapPicker] = useState(null); // { x, y, ids: [] }
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const textRef = useRef(null);
   const fileRef = useRef(null);
   const importRef = useRef(null);
@@ -180,7 +211,6 @@ export default function Annotator() {
     document.head.appendChild(script);
   }, []);
 
-  // Rotating hints
   useEffect(() => {
     const iv = setInterval(() => setHintIdx(h => (h + 1) % HINTS.length), 5000);
     return () => clearInterval(iv);
@@ -193,6 +223,14 @@ export default function Annotator() {
   useEffect(() => {
     if (selectedId != null) setTimeout(() => inputRef.current?.focus(), 80);
   }, [selectedId]);
+
+  // Close overlap picker on outside click
+  useEffect(() => {
+    if (!overlapPicker) return;
+    const close = () => setOverlapPicker(null);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [overlapPicker]);
 
   const handlePdf = async (e) => {
     const file = e.target.files?.[0];
@@ -221,6 +259,7 @@ export default function Annotator() {
             start: a.charRange[0],
             end: a.charRange[1],
             text: a.highlightedText,
+            name: a.name || "",
             color: COLORS.findIndex(c => c.name === a.color) >= 0 ? COLORS.findIndex(c => c.name === a.color) : 0,
             thread: (a.thread || []).map(m => ({
               role: m.role === "comment" ? "user" : m.role,
@@ -228,7 +267,20 @@ export default function Annotator() {
               isComment: m.role === "comment",
               author: m.author || "",
               timestamp: m.timestamp || null,
+              withContext: m.withContext ?? true,
             })),
+            branches: (a.branches || []).map(b => ({
+              thread: b.thread.map(m => ({
+                role: m.role === "comment" ? "user" : m.role,
+                content: m.content,
+                isComment: m.role === "comment",
+                author: m.author || "",
+                timestamp: m.timestamp || null,
+                withContext: m.withContext ?? true,
+              })),
+              createdAt: b.createdAt || null,
+            })),
+            activeBranch: -1,
           })));
         }
         setMode("annotate");
@@ -238,6 +290,7 @@ export default function Annotator() {
     if (importRef.current) importRef.current.value = "";
   };
 
+  // Overlapping highlights allowed — no overlap check
   const handleSelect = useCallback(() => {
     if (mode !== "annotate" || !textRef.current) return;
     const sel = window.getSelection();
@@ -251,17 +304,21 @@ export default function Annotator() {
     const en = Math.max(startOffset, endOffset);
     const hl = doc.slice(s, en);
     if (!hl.trim()) return;
-    const overlaps = annotations.some(a => (s >= a.start && s < a.end) || (en > a.start && en <= a.end) || (s <= a.start && en >= a.end));
-    if (overlaps) { sel.removeAllRanges(); return; }
-    const newAnno = { id: Date.now(), start: s, end: en, text: hl, color: activeColor, thread: [] };
+    const newAnno = { id: Date.now(), start: s, end: en, text: hl, color: activeColor, name: "", thread: [], branches: [], activeBranch: -1 };
     setAnnotations(prev => [...prev, newAnno].sort((a, b) => a.start - b.start));
     setSelectedId(newAnno.id);
     setInputText("");
     sel.removeAllRanges();
-  }, [mode, activeColor, annotations, doc]);
+  }, [mode, activeColor, doc]);
 
   const changeAnnoColor = (id, newColor) => {
     setAnnotations(prev => prev.map(a => a.id === id ? { ...a, color: newColor } : a));
+  };
+
+  const renameAnno = (id, newName) => {
+    setAnnotations(prev => prev.map(a => a.id === id ? { ...a, name: newName } : a));
+    setRenamingId(null);
+    setRenameDraft("");
   };
 
   const parseCommand = (text) => {
@@ -269,6 +326,8 @@ export default function Annotator() {
     if (trimmed.startsWith("/skip")) return { type: "skip", content: trimmed.slice(5).trim() };
     if (trimmed.startsWith("/search ")) return { type: "search", content: trimmed.slice(8).trim() };
     if (trimmed.startsWith("/find ")) return { type: "find", content: trimmed.slice(6).trim() };
+    if (trimmed.startsWith("/ctx ")) return { type: "ctx", content: trimmed.slice(5).trim() };
+    if (trimmed === "/ctx") return { type: "ctx", content: "" };
     return { type: "ask", content: trimmed };
   };
 
@@ -289,7 +348,7 @@ export default function Annotator() {
       : `No matches found for "${query}".`;
     const ts = new Date().toISOString();
     setAnnotations(prev => prev.map(a => a.id === annoId
-      ? { ...a, thread: [...a.thread, { role: "user", content: `/find ${query}`, author: username, timestamp: ts }, { role: "assistant", content: result, author: "system", timestamp: ts }] }
+      ? { ...a, thread: [...a.thread, { role: "user", content: `/find ${query}`, author: username, timestamp: ts, withContext: false }, { role: "assistant", content: result, author: "system", timestamp: ts }] }
       : a));
   };
 
@@ -303,7 +362,7 @@ export default function Annotator() {
       const comment = parsed.content;
       if (comment) {
         setAnnotations(prev => prev.map(a => a.id === id
-          ? { ...a, thread: [...a.thread, { role: "user", content: comment, isComment: true, author: username, timestamp: ts }] }
+          ? { ...a, thread: [...a.thread, { role: "user", content: comment, isComment: true, author: username, timestamp: ts, withContext: false }] }
           : a));
       }
       setInputText(""); return;
@@ -312,10 +371,12 @@ export default function Annotator() {
     if (parsed.type === "find") { handleFind(id, parsed.content); setInputText(""); return; }
 
     const doWebSearch = parsed.type === "search";
+    const withContext = parsed.type === "ctx";
     const userContent = parsed.content;
     if (!userContent) return;
 
-    const newThread = [...anno.thread, { role: "user", content: (doWebSearch ? "🌐 " : "") + userContent, author: username, timestamp: ts }];
+    const prefix = (doWebSearch ? "🌐 " : "") + (withContext ? "📄 " : "");
+    const newThread = [...anno.thread, { role: "user", content: prefix + userContent, author: username, timestamp: ts, withContext }];
     setAnnotations(prev => prev.map(a => a.id === id ? { ...a, thread: newThread } : a));
     setInputText("");
     setLoadingId(id);
@@ -329,7 +390,7 @@ export default function Annotator() {
     if (apiMessages.length > 0 && apiMessages[0].role !== "user") apiMessages.shift();
 
     try {
-      const answer = await callClaude({ messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext, useWebSearch: doWebSearch });
+      const answer = await callClaude({ messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: withContext, useWebSearch: doWebSearch });
       setAnnotations(prev => prev.map(a => a.id === id
         ? { ...a, thread: [...a.thread, { role: "assistant", content: answer, author: "Claude", timestamp: new Date().toISOString() }] }
         : a));
@@ -341,13 +402,81 @@ export default function Annotator() {
     setLoadingId(null);
   };
 
-  const saveEdit = (annoId, msgIdx) => {
+  // Edit: simple save (in-place) — no AI regen
+  const saveEditSimple = (annoId, msgIdx) => {
     setAnnotations(prev => prev.map(a => {
       if (a.id !== annoId) return a;
       const t = [...a.thread]; t[msgIdx] = { ...t[msgIdx], content: editText, editedAt: new Date().toISOString() };
       return { ...a, thread: t };
     }));
     setEditingNote(null); setEditText("");
+  };
+
+  // Edit: branch — save old thread, truncate, edit, regenerate AI
+  const saveEditBranch = async (annoId, msgIdx) => {
+    const anno = annotations.find(a => a.id === annoId);
+    if (!anno) return;
+    setEditingNote(null);
+
+    // Save current thread as a branch
+    const branchSnapshot = { thread: [...anno.thread], createdAt: new Date().toISOString() };
+
+    // Truncate thread to the edit point (keep messages 0..msgIdx-1), then add edited message
+    const editedMsg = { ...anno.thread[msgIdx], content: editText, editedAt: new Date().toISOString() };
+    const truncated = [...anno.thread.slice(0, msgIdx), editedMsg];
+
+    const newBranches = [...anno.branches, branchSnapshot];
+    setAnnotations(prev => prev.map(a => a.id === annoId
+      ? { ...a, thread: truncated, branches: newBranches, activeBranch: -1 }
+      : a));
+    setEditText("");
+
+    // If the edited message is a user message (not a comment), regenerate AI response
+    if (editedMsg.role === "user" && !editedMsg.isComment) {
+      setLoadingId(annoId);
+      const apiMessages = [];
+      for (const m of truncated) {
+        if (m.isComment) continue;
+        if (apiMessages.length > 0 && apiMessages[apiMessages.length - 1].role === m.role) continue;
+        apiMessages.push({ role: m.role, content: m.content });
+      }
+      if (apiMessages.length > 0 && apiMessages[0].role !== "user") apiMessages.shift();
+
+      try {
+        const answer = await callClaude({ messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: editedMsg.withContext || false, useWebSearch: false });
+        setAnnotations(prev => prev.map(a => a.id === annoId
+          ? { ...a, thread: [...a.thread, { role: "assistant", content: answer, author: "Claude", timestamp: new Date().toISOString() }] }
+          : a));
+      } catch {
+        setAnnotations(prev => prev.map(a => a.id === annoId
+          ? { ...a, thread: [...a.thread, { role: "assistant", content: "Error getting response.", author: "Claude", timestamp: new Date().toISOString() }] }
+          : a));
+      }
+      setLoadingId(null);
+    }
+  };
+
+  const switchBranch = (annoId, branchIdx) => {
+    // branchIdx = -1 means current/main thread, 0+ means a saved branch
+    setAnnotations(prev => prev.map(a => {
+      if (a.id !== annoId) return a;
+      if (branchIdx === a.activeBranch) return a;
+
+      // If currently viewing main thread and switching to a branch
+      if (a.activeBranch === -1 && branchIdx >= 0) {
+        // Save current thread as a temporary "main" snapshot and load the branch
+        return { ...a, _savedMain: a.thread, thread: a.branches[branchIdx].thread, activeBranch: branchIdx };
+      }
+      // If currently viewing a branch and switching to main
+      if (a.activeBranch >= 0 && branchIdx === -1) {
+        return { ...a, thread: a._savedMain || a.thread, _savedMain: undefined, activeBranch: -1 };
+      }
+      // Switching between branches
+      if (a.activeBranch >= 0 && branchIdx >= 0) {
+        return { ...a, thread: a.branches[branchIdx].thread, activeBranch: branchIdx };
+      }
+      return a;
+    }));
   };
 
   const deleteAnno = (id) => { setAnnotations(prev => prev.filter(a => a.id !== id)); if (selectedId === id) setSelectedId(null); };
@@ -357,7 +486,8 @@ export default function Annotator() {
     if (!annotations.length) return;
     let md = `# Annotations${fileName ? ` — ${fileName}` : ""}\n\n`;
     annotations.forEach((a, i) => {
-      md += `## Annotation ${i + 1} (${COLORS[a.color].name})\n\n> ${a.text}\n\n`;
+      const label = a.name || `Annotation ${i + 1}`;
+      md += `## ${label} (${COLORS[a.color].name})\n\n> ${a.text}\n\n`;
       a.thread.forEach(m => {
         const who = m.author || (m.role === "user" ? "User" : "Claude");
         const time = m.timestamp ? ` (${new Date(m.timestamp).toLocaleString()})` : "";
@@ -365,6 +495,18 @@ export default function Annotator() {
         else if (m.role === "user") md += `**Q — ${who}${time}:** ${m.content}\n\n`;
         else md += `**A — ${who}${time}:** ${m.content}\n\n`;
       });
+      if (a.branches.length > 0) {
+        md += `### Branches (${a.branches.length})\n\n`;
+        a.branches.forEach((b, bi) => {
+          md += `#### Branch ${bi + 1} (${new Date(b.createdAt).toLocaleString()})\n\n`;
+          b.thread.forEach(m => {
+            const who = m.author || (m.role === "user" ? "User" : "Claude");
+            if (m.isComment) md += `**💬 ${who}:** ${m.content}\n\n`;
+            else if (m.role === "user") md += `**Q — ${who}:** ${m.content}\n\n`;
+            else md += `**A — ${who}:** ${m.content}\n\n`;
+          });
+        });
+      }
       md += `---\n\n`;
     });
     downloadFile(md, `annotations${fileName ? "_" + fileName.replace(/\.pdf$/i, "") : ""}.md`, "text/markdown");
@@ -377,8 +519,12 @@ export default function Annotator() {
       documentText: doc,
       exported: new Date().toISOString(),
       annotations: annotations.map((a, i) => ({
-        id: a.id, index: i + 1, color: COLORS[a.color].name, charRange: [a.start, a.end], highlightedText: a.text,
-        thread: a.thread.map(m => ({ role: m.isComment ? "comment" : m.role, content: m.content, author: m.author || "", timestamp: m.timestamp || null })),
+        id: a.id, index: i + 1, name: a.name || "", color: COLORS[a.color].name, charRange: [a.start, a.end], highlightedText: a.text,
+        thread: a.thread.map(m => ({ role: m.isComment ? "comment" : m.role, content: m.content, author: m.author || "", timestamp: m.timestamp || null, withContext: m.withContext || false })),
+        branches: a.branches.map(b => ({
+          createdAt: b.createdAt,
+          thread: b.thread.map(m => ({ role: m.isComment ? "comment" : m.role, content: m.content, author: m.author || "", timestamp: m.timestamp || null, withContext: m.withContext || false })),
+        })),
       })),
     };
     downloadFile(JSON.stringify(data, null, 2), `annotations${fileName ? "_" + fileName.replace(/\.pdf$/i, "") : ""}.json`, "application/json");
@@ -387,46 +533,167 @@ export default function Annotator() {
   const exportClipboard = () => {
     if (!annotations.length) return;
     const lines = annotations.map((a, i) => {
+      const label = a.name || `#${i + 1}`;
       const quote = `"${a.text.length > 150 ? a.text.slice(0, 150) + "…" : a.text}"`;
       const msgs = a.thread.map(m => {
         const who = m.author ? ` [${m.author}]` : "";
         if (m.isComment) return `   💬${who} ${m.content}`;
         return `   ${m.role === "user" ? "Q" : "A"}${who}: ${m.content}`;
       }).join("\n");
-      return `${i + 1}. ${quote}${msgs ? "\n" + msgs : ""}`;
+      return `${label}. ${quote}${msgs ? "\n" + msgs : ""}`;
     }).join("\n\n");
     navigator.clipboard.writeText(`Annotations${fileName ? ` — ${fileName}` : ""}:\n\n${lines}`).then(() => {
       setCopied(true); setTimeout(() => setCopied(false), 2000);
     });
   };
 
+  // Render document text with overlapping highlight support
   const renderText = () => {
     if (!doc) return null;
     if (!annotations.length) return doc;
-    const parts = []; let last = 0;
+
+    // Build boundary events
+    const events = [];
     annotations.forEach(a => {
-      if (a.start > last) parts.push(<span key={`t-${last}`}>{doc.slice(last, a.start)}</span>);
-      const c = COLORS[a.color]; const active = selectedId === a.id;
-      parts.push(
-        <span key={`h-${a.id}`}
-          onClick={e => { e.stopPropagation(); setSelectedId(a.id); setInputText(""); }}
-          style={{ backgroundColor: active ? c.border + "33" : c.bg, borderBottom: `2px solid ${c.border}`, borderRadius: 2, cursor: "pointer", padding: "1px 0", transition: "all 0.15s ease", outline: active ? `2px solid ${c.border}` : "none", outlineOffset: 1 }}>
-          {doc.slice(a.start, a.end)}
-          {a.thread.length > 0 && <sup data-badge="true" style={{ fontSize: 9, color: c.border, fontFamily: MONO, fontWeight: 500, marginLeft: 1 }}>{a.thread.filter(m => m.role === "user").length || "•"}</sup>}
-        </span>
-      );
-      last = a.end;
+      events.push({ pos: a.start, type: "start", id: a.id });
+      events.push({ pos: a.end, type: "end", id: a.id });
     });
-    if (last < doc.length) parts.push(<span key={`t-${last}`}>{doc.slice(last)}</span>);
+    // Sort: by position, then ends before starts at same position
+    events.sort((a, b) => a.pos - b.pos || (a.type === "end" ? -1 : 1));
+
+    // Collect unique boundary positions
+    const positions = [];
+    const seen = new Set();
+    for (const e of events) {
+      if (!seen.has(e.pos)) { positions.push(e.pos); seen.add(e.pos); }
+    }
+
+    const parts = [];
+    const active = new Set();
+    let last = 0;
+
+    for (const pos of positions) {
+      // Render segment from last to pos with current active set
+      if (pos > last) {
+        const segment = doc.slice(last, pos);
+        if (active.size === 0) {
+          parts.push(<span key={`t-${last}`}>{segment}</span>);
+        } else {
+          const activeAnnos = annotations.filter(a => active.has(a.id));
+          parts.push(renderHighlightSegment(last, segment, activeAnnos));
+        }
+      }
+      // Process events at this position
+      for (const e of events) {
+        if (e.pos !== pos) continue;
+        if (e.type === "start") active.add(e.id);
+        else active.delete(e.id);
+      }
+      last = pos;
+    }
+
+    // Remaining text after all boundaries
+    if (last < doc.length) {
+      if (active.size === 0) {
+        parts.push(<span key={`t-${last}`}>{doc.slice(last)}</span>);
+      } else {
+        const activeAnnos = annotations.filter(a => active.has(a.id));
+        parts.push(renderHighlightSegment(last, doc.slice(last), activeAnnos));
+      }
+    }
+
     return parts;
   };
 
+  const renderHighlightSegment = (offset, text, activeAnnos) => {
+    // Use the most recently added annotation for primary color
+    const primary = activeAnnos[activeAnnos.length - 1];
+    const c = COLORS[primary.color];
+    const isSelected = activeAnnos.some(a => a.id === selectedId);
+    const isOverlap = activeAnnos.length > 1;
+
+    // For overlaps, create a striped gradient with all colors
+    let bg;
+    if (isOverlap) {
+      if (isSelected) {
+        const selAnno = activeAnnos.find(a => a.id === selectedId);
+        bg = COLORS[selAnno ? selAnno.color : primary.color].border + "33";
+      } else {
+        const stops = activeAnnos.map((a, i) => {
+          const col = COLORS[a.color].bg;
+          const pct1 = (i / activeAnnos.length * 100).toFixed(0);
+          const pct2 = ((i + 1) / activeAnnos.length * 100).toFixed(0);
+          return `${col} ${pct1}%, ${col} ${pct2}%`;
+        }).join(", ");
+        bg = `linear-gradient(135deg, ${stops})`;
+      }
+    } else {
+      bg = isSelected ? c.border + "33" : c.bg;
+    }
+
+    // Show badge only at the end of each annotation's range
+    const badges = [];
+    for (const a of activeAnnos) {
+      if (offset + text.length === a.end && a.thread.length > 0) {
+        const ac = COLORS[a.color];
+        const qCount = a.thread.filter(m => m.role === "user").length;
+        badges.push(
+          <sup key={`b-${a.id}`} data-badge="true" style={{ fontSize: 9, color: ac.border, fontFamily: MONO, fontWeight: 500, marginLeft: 1 }}>
+            {qCount || "•"}
+          </sup>
+        );
+      }
+    }
+
+    const handleClick = (e) => {
+      e.stopPropagation();
+      if (activeAnnos.length === 1) {
+        setSelectedId(activeAnnos[0].id);
+        setInputText("");
+      } else {
+        // Show overlap picker
+        setOverlapPicker({ x: e.clientX, y: e.clientY, ids: activeAnnos.map(a => a.id) });
+      }
+    };
+
+    // Border: use gradient for overlaps
+    let borderBottom;
+    if (isOverlap) {
+      const colors = activeAnnos.map(a => COLORS[a.color].border);
+      borderBottom = `2px solid ${colors[0]}`;
+    } else {
+      borderBottom = `2px solid ${c.border}`;
+    }
+
+    return (
+      <span key={`h-${offset}`} onClick={handleClick}
+        style={{
+          background: bg, borderBottom, borderRadius: 2, cursor: "pointer",
+          padding: "1px 0", transition: "all 0.15s ease",
+          outline: isSelected ? `2px solid ${c.border}` : "none", outlineOffset: 1,
+        }}>
+        {text}
+        {isOverlap && (
+          <sup data-badge="true" style={{ fontSize: 8, color: "#666", fontFamily: MONO, marginLeft: 1 }}>
+            ×{activeAnnos.length}
+          </sup>
+        )}
+        {badges}
+      </span>
+    );
+  };
+
   const currentAnno = annotations.find(a => a.id === selectedId);
+  const currentThread = currentAnno ? currentAnno.thread : [];
+  const isViewingBranch = currentAnno && currentAnno.activeBranch >= 0;
   const cmdHints = [
     { cmd: "/skip", desc: "comment (no AI)" },
     { cmd: "/search", desc: "ask + web search" },
     { cmd: "/find", desc: "search in document" },
+    { cmd: "/ctx", desc: "ask with full doc context" },
   ];
+
+  const getAnnoLabel = (a, i) => a.name || `#${i + 1}`;
 
   return (
     <div style={{ fontFamily: FONT, height: "100vh", display: "flex", flexDirection: "column", background: "#FAF9F6", color: "#1a1a1a" }}>
@@ -437,7 +704,6 @@ export default function Annotator() {
             <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, letterSpacing: "-0.02em" }}>Annotator</h1>
             <p style={{ margin: "1px 0 0", fontSize: 11, opacity: 0.45, fontFamily: MONO }}>{fileName ? `📄 ${fileName}` : "paste or upload → highlight → ask"}</p>
           </div>
-          {/* Username */}
           <div style={{ marginLeft: 8 }}>
             {showUserEdit ? (
               <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -476,13 +742,6 @@ export default function Annotator() {
               </button>
             ))}
           </div>
-          {mode === "annotate" && (
-            <button onClick={() => setUseContext(v => !v)}
-              title={useContext ? "Claude sees full document" : "Claude sees passage only"}
-              style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${useContext ? "#3B82F6" : "#d4d0c8"}`, background: useContext ? "#DBEAFE" : "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
-              {useContext ? "📄 Full ctx" : "✂️ Passage"}
-            </button>
-          )}
           {mode === "annotate" && annotations.length > 0 && (
             <div style={{ position: "relative" }}>
               <button onClick={() => setShowExportMenu(v => !v)}
@@ -511,9 +770,9 @@ export default function Annotator() {
       </div>
 
       {/* Body */}
-      <div style={{ flex: 1, display: "flex", overflow: "hidden" }} onClick={() => showExportMenu && setShowExportMenu(false)}>
+      <div style={{ flex: 1, display: "flex", overflow: "hidden" }} onClick={() => { showExportMenu && setShowExportMenu(false); }}>
         {/* Document pane */}
-        <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: 24, position: "relative" }}>
           {mode === "edit" ? (
             <textarea value={doc} onChange={e => { setDoc(e.target.value); setAnnotations([]); }}
               placeholder="Paste your document text here, or upload a PDF…"
@@ -526,12 +785,43 @@ export default function Annotator() {
                   <button key={i} onClick={() => setActiveColor(i)} title={c.name}
                     style={{ width: 20, height: 20, borderRadius: "50%", border: activeColor === i ? `2.5px solid ${c.border}` : "2px solid #d4d0c8", background: c.bg, cursor: "pointer", transition: "all 0.15s", transform: activeColor === i ? "scale(1.15)" : "scale(1)" }} />
                 ))}
-                <span style={{ fontSize: 11, fontFamily: MONO, opacity: 0.3, marginLeft: 8 }}>select text to highlight</span>
+                <span style={{ fontSize: 11, fontFamily: MONO, opacity: 0.3, marginLeft: 8 }}>select text to highlight (overlaps OK)</span>
               </div>
               <div ref={textRef} onMouseUp={handleSelect}
                 style={{ padding: 24, background: "#fff", border: "1px solid #d4d0c8", borderRadius: 10, fontSize: 15, lineHeight: 1.85, minHeight: 400, whiteSpace: "pre-wrap", cursor: "text", userSelect: "text" }}>
                 {doc ? renderText() : <span style={{ opacity: 0.3, fontStyle: "italic" }}>Switch to Edit mode first.</span>}
               </div>
+            </div>
+          )}
+
+          {/* Overlap picker popover */}
+          {overlapPicker && (
+            <div style={{
+              position: "fixed", left: overlapPicker.x, top: overlapPicker.y + 8, zIndex: 50,
+              background: "#fff", border: "1px solid #d4d0c8", borderRadius: 8,
+              boxShadow: "0 4px 12px rgba(0,0,0,0.12)", padding: 4, minWidth: 150,
+            }} onClick={e => e.stopPropagation()}>
+              <div style={{ padding: "4px 8px", fontSize: 10, fontFamily: MONO, opacity: 0.4, textTransform: "uppercase" }}>Select annotation</div>
+              {overlapPicker.ids.map(id => {
+                const a = annotations.find(x => x.id === id);
+                if (!a) return null;
+                const idx = annotations.indexOf(a);
+                const c = COLORS[a.color];
+                return (
+                  <button key={id} onClick={() => { setSelectedId(id); setInputText(""); setOverlapPicker(null); }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6, width: "100%", padding: "6px 8px",
+                      border: "none", background: selectedId === id ? c.bg : "transparent",
+                      borderRadius: 4, cursor: "pointer", fontFamily: MONO, fontSize: 11, textAlign: "left",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = c.bg}
+                    onMouseLeave={e => e.currentTarget.style.background = selectedId === id ? c.bg : "transparent"}>
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: c.border, flexShrink: 0 }} />
+                    <span>{a.name || `#${idx + 1}`}</span>
+                    <span style={{ opacity: 0.4, marginLeft: "auto" }}>{a.text.slice(0, 25)}…</span>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -551,12 +841,29 @@ export default function Annotator() {
             {currentAnno ? (() => {
               const c = COLORS[currentAnno.color];
               const showCmdHints = inputText.startsWith("/");
+              const annoIdx = annotations.indexOf(currentAnno);
               return (
                 <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
-                  {/* Highlighted passage */}
+                  {/* Highlighted passage + name */}
                   <div style={{ padding: "12px 16px", borderBottom: "1px solid #e5e2db", background: c.bg, flexShrink: 0 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                      <span style={{ fontSize: 10, fontFamily: MONO, opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.04em" }}>Highlighted Passage</span>
+                      {/* Annotation name (double-click to rename) */}
+                      {renamingId === currentAnno.id ? (
+                        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                          <input value={renameDraft} onChange={e => setRenameDraft(e.target.value)}
+                            onKeyDown={e => { if (e.key === "Enter") renameAnno(currentAnno.id, renameDraft.trim()); if (e.key === "Escape") setRenamingId(null); }}
+                            placeholder={`#${annoIdx + 1}`} autoFocus
+                            style={{ padding: "2px 6px", fontFamily: MONO, fontSize: 11, border: `1px solid ${c.border}`, borderRadius: 4, outline: "none", width: 120, background: "#fff" }} />
+                          <button onClick={() => renameAnno(currentAnno.id, renameDraft.trim())}
+                            style={{ padding: "2px 6px", borderRadius: 3, border: "none", background: c.border, color: "#fff", fontSize: 10, fontFamily: MONO, cursor: "pointer" }}>✓</button>
+                        </div>
+                      ) : (
+                        <span onDoubleClick={() => { setRenamingId(currentAnno.id); setRenameDraft(currentAnno.name); }}
+                          title="Double-click to rename"
+                          style={{ fontSize: 10, fontFamily: MONO, opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.04em", cursor: "pointer" }}>
+                          {currentAnno.name || `#${annoIdx + 1}`} — Highlighted Passage
+                        </span>
+                      )}
                       <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                         <MiniColorPicker current={currentAnno.color} onChange={(ci) => changeAnnoColor(currentAnno.id, ci)} />
                         <button onClick={() => deleteAnno(currentAnno.id)} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid #fca5a5", background: "#fef2f2", color: "#b91c1c", fontSize: 10, fontFamily: MONO, cursor: "pointer", marginLeft: 4 }}>✕</button>
@@ -567,14 +874,45 @@ export default function Annotator() {
                     </p>
                   </div>
 
+                  {/* Branch switcher */}
+                  {currentAnno.branches.length > 0 && (
+                    <div style={{ padding: "6px 16px", borderBottom: "1px solid #e5e2db", display: "flex", gap: 4, alignItems: "center", flexShrink: 0, overflowX: "auto" }}>
+                      <span style={{ fontSize: 10, fontFamily: MONO, opacity: 0.4, flexShrink: 0 }}>branch:</span>
+                      <button onClick={() => switchBranch(currentAnno.id, -1)}
+                        style={{
+                          padding: "2px 8px", borderRadius: 4, border: `1px solid ${currentAnno.activeBranch === -1 ? c.border : "#d4d0c8"}`,
+                          background: currentAnno.activeBranch === -1 ? c.bg : "transparent",
+                          fontSize: 10, fontFamily: MONO, cursor: "pointer", flexShrink: 0, fontWeight: currentAnno.activeBranch === -1 ? 600 : 400,
+                        }}>
+                        current
+                      </button>
+                      {currentAnno.branches.map((b, bi) => (
+                        <button key={bi} onClick={() => switchBranch(currentAnno.id, bi)}
+                          title={b.createdAt ? new Date(b.createdAt).toLocaleString() : ""}
+                          style={{
+                            padding: "2px 8px", borderRadius: 4, border: `1px solid ${currentAnno.activeBranch === bi ? c.border : "#d4d0c8"}`,
+                            background: currentAnno.activeBranch === bi ? c.bg : "transparent",
+                            fontSize: 10, fontFamily: MONO, cursor: "pointer", flexShrink: 0, fontWeight: currentAnno.activeBranch === bi ? 600 : 400,
+                          }}>
+                          v{bi + 1}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Thread */}
                   <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
-                    {currentAnno.thread.length === 0 && loadingId !== currentAnno.id && (
+                    {isViewingBranch && (
+                      <div style={{ padding: "4px 8px", background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: 6, fontSize: 10, fontFamily: MONO, textAlign: "center", opacity: 0.7 }}>
+                        Viewing saved branch v{currentAnno.activeBranch + 1} (read-only)
+                      </div>
+                    )}
+                    {currentThread.length === 0 && loadingId !== currentAnno.id && (
                       <p style={{ fontSize: 12, opacity: 0.3, fontStyle: "italic", textAlign: "center", margin: "20px 0", lineHeight: 1.6 }}>
                         {HINTS[hintIdx]}
                       </p>
                     )}
-                    {currentAnno.thread.map((msg, idx) => {
+                    {currentThread.map((msg, idx) => {
                       const isUser = msg.role === "user";
                       const isComment = msg.isComment;
                       const isEditing = editingNote?.annoId === currentAnno.id && editingNote?.msgIdx === idx;
@@ -584,6 +922,7 @@ export default function Annotator() {
                             <span style={{ fontSize: 10, fontFamily: MONO, opacity: 0.35 }}>
                               {isComment ? "💬" : ""} {msg.author || (isUser ? "You" : "Claude")}
                             </span>
+                            {msg.withContext && !isComment && <span style={{ fontSize: 8, fontFamily: MONO, opacity: 0.3, background: "#DBEAFE", padding: "0 3px", borderRadius: 2 }}>ctx</span>}
                             {msg.timestamp && <span style={{ fontSize: 9, fontFamily: MONO, opacity: 0.25 }}>{formatTime(msg.timestamp)}</span>}
                             {msg.editedAt && <span style={{ fontSize: 9, fontFamily: MONO, opacity: 0.2 }}>(edited)</span>}
                           </div>
@@ -593,7 +932,14 @@ export default function Annotator() {
                                 style={{ width: "100%", minHeight: 50, padding: 8, fontFamily: FONT, fontSize: 13, border: `1px solid ${c.border}`, borderRadius: 8, resize: "vertical", background: "#fff", outline: "none", boxSizing: "border-box", lineHeight: 1.5 }} />
                               <div style={{ display: "flex", gap: 4, marginTop: 4, justifyContent: "flex-end" }}>
                                 <button onClick={() => setEditingNote(null)} style={{ padding: "3px 8px", borderRadius: 4, border: "1px solid #d4d0c8", background: "transparent", fontSize: 10, fontFamily: MONO, cursor: "pointer" }}>Cancel</button>
-                                <button onClick={() => saveEdit(currentAnno.id, idx)} style={{ padding: "3px 8px", borderRadius: 4, border: "none", background: c.border, color: "#fff", fontSize: 10, fontFamily: MONO, cursor: "pointer" }}>Save</button>
+                                <button onClick={() => saveEditSimple(currentAnno.id, idx)} style={{ padding: "3px 8px", borderRadius: 4, border: "none", background: "#666", color: "#fff", fontSize: 10, fontFamily: MONO, cursor: "pointer" }}>Save</button>
+                                {isUser && !isComment && (
+                                  <button onClick={() => saveEditBranch(currentAnno.id, idx)}
+                                    title="Save edit + create branch + regenerate AI response"
+                                    style={{ padding: "3px 8px", borderRadius: 4, border: "none", background: c.border, color: "#fff", fontSize: 10, fontFamily: MONO, cursor: "pointer" }}>
+                                    Branch + Regen
+                                  </button>
+                                )}
                               </div>
                             </div>
                           ) : (
@@ -603,15 +949,19 @@ export default function Annotator() {
                               border: `1px solid ${isComment ? "#FCD34D" : isUser ? c.border + "30" : "#e8e6e1"}`,
                               borderLeft: isComment ? "3px solid #F59E0B" : undefined,
                             }}>
-                              <p style={{ fontSize: 13, margin: 0, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{msg.content}</p>
-                              <div style={{ display: "flex", gap: 4, marginTop: 5 }}>
-                                <button onClick={() => { setEditingNote({ annoId: currentAnno.id, msgIdx: idx }); setEditText(msg.content); }}
-                                  style={{ padding: "1px 6px", borderRadius: 3, border: "none", background: "transparent", fontSize: 10, fontFamily: MONO, cursor: "pointer", opacity: 0.2, transition: "opacity 0.15s" }}
-                                  onMouseEnter={e => e.target.style.opacity = 0.6} onMouseLeave={e => e.target.style.opacity = 0.2}>edit</button>
-                                <button onClick={() => deleteMessage(currentAnno.id, idx)}
-                                  style={{ padding: "1px 6px", borderRadius: 3, border: "none", background: "transparent", fontSize: 10, fontFamily: MONO, cursor: "pointer", opacity: 0.2, color: "#b91c1c", transition: "opacity 0.15s" }}
-                                  onMouseEnter={e => e.target.style.opacity = 0.6} onMouseLeave={e => e.target.style.opacity = 0.2}>delete</button>
-                              </div>
+                              <p style={{ fontSize: 13, margin: 0, lineHeight: 1.6 }}>
+                                <MessageContent content={msg.content} annotations={annotations} onNavigate={(id) => { setSelectedId(id); setInputText(""); }} />
+                              </p>
+                              {!isViewingBranch && (
+                                <div style={{ display: "flex", gap: 4, marginTop: 5 }}>
+                                  <button onClick={() => { setEditingNote({ annoId: currentAnno.id, msgIdx: idx }); setEditText(msg.content); }}
+                                    style={{ padding: "1px 6px", borderRadius: 3, border: "none", background: "transparent", fontSize: 10, fontFamily: MONO, cursor: "pointer", opacity: 0.2, transition: "opacity 0.15s" }}
+                                    onMouseEnter={e => e.target.style.opacity = 0.6} onMouseLeave={e => e.target.style.opacity = 0.2}>edit</button>
+                                  <button onClick={() => deleteMessage(currentAnno.id, idx)}
+                                    style={{ padding: "1px 6px", borderRadius: 3, border: "none", background: "transparent", fontSize: 10, fontFamily: MONO, cursor: "pointer", opacity: 0.2, color: "#b91c1c", transition: "opacity 0.15s" }}
+                                    onMouseEnter={e => e.target.style.opacity = 0.6} onMouseLeave={e => e.target.style.opacity = 0.2}>delete</button>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -627,7 +977,7 @@ export default function Annotator() {
                   </div>
 
                   {/* Command hints */}
-                  {showCmdHints && (
+                  {!isViewingBranch && showCmdHints && (
                     <div style={{ padding: "6px 16px", borderTop: "1px solid #f0ede8", background: "#faf9f6", flexShrink: 0 }}>
                       {cmdHints.filter(h => h.cmd.startsWith(inputText.split(" ")[0])).map(h => (
                         <div key={h.cmd} onClick={() => { setInputText(h.cmd + " "); inputRef.current?.focus(); }}
@@ -639,17 +989,19 @@ export default function Annotator() {
                     </div>
                   )}
 
-                  {/* Input */}
-                  <div style={{ padding: "10px 16px 14px", borderTop: "1px solid #e5e2db", flexShrink: 0 }}>
-                    <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
-                      <AutoTextarea inputRef={inputRef} value={inputText} onChange={e => setInputText(e.target.value)}
-                        onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(currentAnno.id); } }}
-                        placeholder={currentAnno.thread.length ? "Follow up, /skip, /search, /find…" : "Ask about this passage…"} />
-                      <button onClick={() => sendMessage(currentAnno.id)}
-                        disabled={!inputText.trim() || loadingId === currentAnno.id}
-                        style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: inputText.trim() ? c.border : "#ddd", color: "#fff", fontFamily: MONO, fontSize: 12, cursor: inputText.trim() ? "pointer" : "default", transition: "all 0.15s", flexShrink: 0, marginBottom: 1 }}>↵</button>
+                  {/* Input (hidden when viewing a branch) */}
+                  {!isViewingBranch && (
+                    <div style={{ padding: "10px 16px 14px", borderTop: "1px solid #e5e2db", flexShrink: 0 }}>
+                      <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
+                        <AutoTextarea inputRef={inputRef} value={inputText} onChange={e => setInputText(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(currentAnno.id); } }}
+                          placeholder={currentThread.length ? "Follow up, /ctx, /skip, /search, /find, @#N…" : "Ask about this passage… (/ctx for full doc)"} />
+                        <button onClick={() => sendMessage(currentAnno.id)}
+                          disabled={!inputText.trim() || loadingId === currentAnno.id}
+                          style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: inputText.trim() ? c.border : "#ddd", color: "#fff", fontFamily: MONO, fontSize: 12, cursor: inputText.trim() ? "pointer" : "default", transition: "all 0.15s", flexShrink: 0, marginBottom: 1 }}>↵</button>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               );
             })() : (
@@ -671,7 +1023,8 @@ export default function Annotator() {
                           onMouseEnter={e => e.currentTarget.style.borderColor = c.border} onMouseLeave={e => e.currentTarget.style.borderColor = "#e5e2db"}>
                           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
                             <span style={{ width: 8, height: 8, borderRadius: "50%", background: c.border, flexShrink: 0 }} />
-                            <span style={{ fontSize: 11, fontFamily: MONO, opacity: 0.4 }}>#{i + 1}</span>
+                            <span style={{ fontSize: 11, fontFamily: MONO, opacity: 0.4 }}>{getAnnoLabel(a, i)}</span>
+                            {a.branches.length > 0 && <span style={{ fontSize: 9, fontFamily: MONO, opacity: 0.3 }}>🌿{a.branches.length}</span>}
                             {qCount > 0 && <span style={{ fontSize: 10, fontFamily: MONO, opacity: 0.4, marginLeft: "auto" }}>💬 {qCount}</span>}
                           </div>
                           <p style={{ fontSize: 12, margin: 0, fontStyle: "italic", opacity: 0.65, lineHeight: 1.4 }}>
