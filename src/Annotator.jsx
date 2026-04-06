@@ -39,6 +39,60 @@ async function extractPdfText(file) {
   return text;
 }
 
+function extractHtmlText(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  for (const el of doc.querySelectorAll("script, style, noscript")) el.remove();
+  return (doc.body?.textContent || "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function extractRtfText(rtf) {
+  let text = rtf.replace(/\\par[d]?\b/g, "\n").replace(/\{\\[^{}]*\}/g, "")
+    .replace(/\\[a-z]+\d*\s?/gi, "").replace(/[{}]/g, "");
+  return text.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+async function extractDocxText(file) {
+  if (!window.mammoth) throw new Error("DOCX library not loaded yet");
+  const buf = await file.arrayBuffer();
+  const result = await window.mammoth.extractRawText({ arrayBuffer: buf });
+  return result.value.trim();
+}
+
+async function extractEpubText(file) {
+  if (!window.JSZip) throw new Error("EPUB library not loaded yet");
+  const zip = await window.JSZip.loadAsync(await file.arrayBuffer());
+  const texts = [];
+  const htmlFiles = Object.keys(zip.files).filter(n => /\.(x?html?|xml)$/i.test(n) && !n.endsWith("container.xml") && !n.endsWith("content.opf") && !n.endsWith("toc.ncx")).sort();
+  for (const name of htmlFiles) {
+    const html = await zip.files[name].async("string");
+    const extracted = extractHtmlText(html);
+    if (extracted) texts.push(extracted);
+  }
+  return texts.join("\n\n");
+}
+
+const SUPPORTED_DOC_TYPES = ".pdf,.txt,.md,.html,.htm,.rtf,.docx,.epub,.csv,.tsv,.log,.xml,.json";
+
+async function extractFileText(file) {
+  const ext = file.name.split(".").pop().toLowerCase();
+  switch (ext) {
+    case "pdf": return extractPdfText(file);
+    case "docx": return extractDocxText(file);
+    case "epub": return extractEpubText(file);
+    case "htm":
+    case "html":
+    case "xml": {
+      const text = await file.text();
+      return extractHtmlText(text);
+    }
+    case "rtf": {
+      const text = await file.text();
+      return extractRtfText(text);
+    }
+    default: return file.text();
+  }
+}
+
 // --- AI Provider infrastructure ---
 const PROVIDERS = [
   { id: "anthropic", name: "Anthropic (Claude)", defaultModel: "claude-sonnet-4-20250514", needsKey: true, supportsSearch: true },
@@ -333,6 +387,12 @@ export default function Annotator() {
       setPdfReady(true);
     };
     document.head.appendChild(script);
+    const mammothScript = document.createElement("script");
+    mammothScript.src = "https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.8.0/mammoth.browser.min.js";
+    document.head.appendChild(mammothScript);
+    const jszipScript = document.createElement("script");
+    jszipScript.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+    document.head.appendChild(jszipScript);
   }, []);
 
   useEffect(() => {
@@ -394,14 +454,15 @@ export default function Annotator() {
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
-  const handlePdf = async (e) => {
+  const handleDocUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setPdfLoading(true);
     try {
-      const text = await extractPdfText(file);
+      const text = await extractFileText(file);
+      if (!text.trim()) throw new Error("No text extracted");
       setDoc(text); setFileName(file.name); setAnnotations([]); setMode("annotate");
-    } catch { alert("Could not extract text from this PDF."); }
+    } catch (err) { alert(`Could not extract text from ${file.name}: ${err.message}`); }
     setPdfLoading(false);
     if (fileRef.current) fileRef.current.value = "";
   };
@@ -880,7 +941,7 @@ export default function Annotator() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div>
             <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, letterSpacing: "-0.02em" }}>Annotator</h1>
-            <p style={{ margin: "1px 0 0", fontSize: 11, opacity: 0.45, fontFamily: MONO }}>{fileName ? `📄 ${fileName}` : "paste or upload → highlight → ask"}</p>
+            <p style={{ margin: "1px 0 0", fontSize: 11, opacity: 0.45, fontFamily: MONO }}>{fileName ? `📄 ${fileName}` : "paste or upload a document → highlight → ask"}</p>
           </div>
           <div style={{ marginLeft: 8 }}>
             {showUserEdit ? (
@@ -902,12 +963,12 @@ export default function Annotator() {
         </div>
 
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <input ref={fileRef} type="file" accept=".pdf" onChange={handlePdf} style={{ display: "none" }} />
+          <input ref={fileRef} type="file" accept={SUPPORTED_DOC_TYPES} onChange={handleDocUpload} style={{ display: "none" }} />
           <input ref={importRef} type="file" accept=".json" onChange={handleImport} style={{ display: "none" }} />
           <input ref={attachRef} type="file" onChange={handleAttach} style={{ display: "none" }} />
-          <button onClick={() => fileRef.current?.click()} disabled={!pdfReady || pdfLoading}
-            style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #d4d0c8", background: pdfLoading ? "#FEF3C7" : "transparent", cursor: pdfReady ? "pointer" : "not-allowed", fontFamily: MONO, fontSize: 11, opacity: pdfReady ? 1 : 0.4 }}>
-            {pdfLoading ? "⏳…" : "📎 PDF"}
+          <button onClick={() => fileRef.current?.click()} disabled={pdfLoading}
+            style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #d4d0c8", background: pdfLoading ? "#FEF3C7" : "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
+            {pdfLoading ? "⏳…" : "📄 Upload"}
           </button>
           <button onClick={() => importRef.current?.click()}
             style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #d4d0c8", background: "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
@@ -1048,7 +1109,7 @@ export default function Annotator() {
         <div ref={docPaneRef} style={{ flex: 1, overflowY: "auto", padding: 24, position: "relative" }}>
           {mode === "edit" ? (
             <textarea value={doc} onChange={e => { setDoc(e.target.value); setAnnotations([]); }}
-              placeholder="Paste your document text here, or upload a PDF…"
+              placeholder="Paste your document text here, or upload a file (PDF, DOCX, EPUB, HTML, TXT, MD, RTF, CSV)…"
               style={{ width: "100%", height: "100%", minHeight: 400, padding: 20, fontFamily: FONT, fontSize: 15, lineHeight: 1.75, border: "1px solid #d4d0c8", borderRadius: 10, resize: "none", background: "#fff", color: "#1a1a1a", outline: "none", boxSizing: "border-box" }} />
           ) : (
             <div>
