@@ -375,7 +375,29 @@ export default function Annotator() {
   const scrollPosRef = useRef({ edit: 0, annotate: 0 });
   const attachRef = useRef(null);
   const attachTargetRef = useRef(null);
-  const annotatedDocRef = useRef("");
+  const editRef = useRef(null);
+  const preEditRef = useRef({ start: 0, end: 0 });
+
+  // Prevent edits within annotated regions in the edit textarea
+  useEffect(() => {
+    const ta = editRef.current;
+    if (!ta || mode !== "edit") return;
+    const handler = (e) => {
+      if (!annotations.length) return;
+      let rangeStart = ta.selectionStart;
+      let rangeEnd = ta.selectionEnd;
+      if (rangeStart === rangeEnd) {
+        if (e.inputType === "deleteContentBackward") rangeStart = Math.max(0, rangeStart - 1);
+        else if (e.inputType === "deleteContentForward") rangeEnd = Math.min(doc.length, rangeEnd + 1);
+      }
+      for (const a of annotations) {
+        if (rangeStart < a.end && rangeEnd > a.start) { e.preventDefault(); return; }
+      }
+      preEditRef.current = { start: ta.selectionStart, end: ta.selectionEnd };
+    };
+    ta.addEventListener("beforeinput", handler);
+    return () => ta.removeEventListener("beforeinput", handler);
+  }, [mode, annotations, doc]);
 
   useEffect(() => {
     const link = document.createElement("link");
@@ -428,10 +450,6 @@ export default function Annotator() {
   const switchMode = (newMode) => {
     if (newMode === mode) return;
     if (docPaneRef.current) scrollPosRef.current[mode] = docPaneRef.current.scrollTop;
-    if (newMode === "annotate" && doc !== annotatedDocRef.current) {
-      setAnnotations([]);
-      annotatedDocRef.current = doc;
-    }
     setMode(newMode);
   };
 
@@ -467,7 +485,7 @@ export default function Annotator() {
     try {
       const text = await extractFileText(file);
       if (!text.trim()) throw new Error("No text extracted");
-      setDoc(text); setFileName(file.name); setAnnotations([]); annotatedDocRef.current = text; setMode("annotate");
+      setDoc(text); setFileName(file.name); setAnnotations([]); setMode("annotate");
     } catch (err) { alert(`Could not extract text from ${file.name}: ${err.message}`); }
     setPdfLoading(false);
     if (fileRef.current) fileRef.current.value = "";
@@ -480,7 +498,7 @@ export default function Annotator() {
     reader.onload = (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
-        if (data.documentText) { setDoc(data.documentText); annotatedDocRef.current = data.documentText; }
+        if (data.documentText) setDoc(data.documentText);
         if (data.source) setFileName(data.source);
         if (data.annotations) {
           setAnnotations(data.annotations.map(a => ({
@@ -1156,9 +1174,56 @@ export default function Annotator() {
         {/* Document pane */}
         <div ref={docPaneRef} style={{ flex: 1, overflowY: "auto", padding: 24, position: "relative" }}>
           {mode === "edit" ? (
-            <textarea value={doc} onChange={e => setDoc(e.target.value)}
-              placeholder="Paste your document text here, or upload a file (PDF, DOCX, EPUB, HTML, TXT, MD, RTF, CSV)…"
-              style={{ width: "100%", height: "100%", minHeight: 400, padding: 20, fontFamily: FONT, fontSize: 15, lineHeight: 1.75, border: "1px solid #d4d0c8", borderRadius: 10, resize: "none", background: "#fff", color: "#1a1a1a", outline: "none", boxSizing: "border-box" }} />
+            <div style={{ position: "relative", width: "100%", minHeight: 400 }}>
+              {/* Backdrop with highlighted annotation regions */}
+              {annotations.length > 0 && (
+                <div aria-hidden style={{
+                  position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+                  padding: 20, fontFamily: FONT, fontSize: 15, lineHeight: 1.75,
+                  border: "1px solid transparent", borderRadius: 10,
+                  whiteSpace: "pre-wrap", wordWrap: "break-word", overflow: "hidden",
+                  pointerEvents: "none", color: "transparent", boxSizing: "border-box",
+                }}>
+                  {(() => {
+                    const sorted = [...annotations].sort((a, b) => a.start - b.start);
+                    // Merge overlapping ranges
+                    const merged = [];
+                    for (const a of sorted) {
+                      if (merged.length && a.start <= merged[merged.length - 1][1]) {
+                        merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], a.end);
+                      } else {
+                        merged.push([a.start, a.end]);
+                      }
+                    }
+                    const parts = [];
+                    let pos = 0;
+                    for (const [s, e] of merged) {
+                      if (pos < s) parts.push(<span key={`g-${pos}`}>{doc.slice(pos, s)}</span>);
+                      parts.push(<span key={`h-${s}`} style={{ background: "#e0ddd6", borderRadius: 3 }}>{doc.slice(s, e)}</span>);
+                      pos = e;
+                    }
+                    if (pos < doc.length) parts.push(<span key={`g-${pos}`}>{doc.slice(pos)}</span>);
+                    return parts;
+                  })()}
+                </div>
+              )}
+              {/* Textarea on top */}
+              <textarea ref={editRef} value={doc} onChange={e => {
+                  const newText = e.target.value;
+                  if (!annotations.length) { setDoc(newText); return; }
+                  const { start: selStart, end: selEnd } = preEditRef.current;
+                  const delta = newText.length - doc.length;
+                  setDoc(newText);
+                  if (delta !== 0) {
+                    setAnnotations(prev => prev.map(a => {
+                      if (a.start >= selEnd) return { ...a, start: a.start + delta, end: a.end + delta };
+                      return a;
+                    }));
+                  }
+                }}
+                placeholder="Paste your document text here, or upload a file (PDF, DOCX, EPUB, HTML, TXT, MD, RTF, CSV)…"
+                style={{ position: "relative", width: "100%", height: "100%", minHeight: 400, padding: 20, fontFamily: FONT, fontSize: 15, lineHeight: 1.75, border: "1px solid #d4d0c8", borderRadius: 10, resize: "none", background: annotations.length > 0 ? "transparent" : "#fff", color: "#1a1a1a", outline: "none", boxSizing: "border-box", caretColor: "#1a1a1a" }} />
+            </div>
           ) : (
             <div>
               <div style={{ display: "flex", gap: 6, marginBottom: 12, alignItems: "center" }}>
