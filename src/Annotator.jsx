@@ -1290,6 +1290,86 @@ export default function Annotator() {
               )}
             </div>
           )}
+          {IS_DEPLOYED && !authLoading && (
+            currentUser ? (
+              <div style={{ position: "relative" }}>
+                <button onClick={() => setShowUserMenu(v => !v)}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 7, border: "1px solid #d4d0c8", background: "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
+                  {currentUser.avatarUrl ? (
+                    <img src={currentUser.avatarUrl} alt="" style={{ width: 20, height: 20, borderRadius: "50%" }} />
+                  ) : (
+                    <span style={{ width: 20, height: 20, borderRadius: "50%", background: "#e5e2dc", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10 }}>
+                      {currentUser.name?.[0]?.toUpperCase() || "?"}
+                    </span>
+                  )}
+                  <span>{currentUser.name?.split(" ")[0] || "Account"}</span>
+                </button>
+                {showUserMenu && (
+                  <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#fff", border: "1px solid #e5e2dc", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.08)", minWidth: 200, zIndex: 1000, fontFamily: MONO, fontSize: 11 }}
+                    onClick={() => setShowUserMenu(false)}>
+                    <div style={{ padding: "10px 14px", borderBottom: "1px solid #f0ede8", opacity: 0.6 }}>{currentUser.email}</div>
+                    {usageInfo && (
+                      <div style={{ padding: "10px 14px", borderBottom: "1px solid #f0ede8" }}>
+                        {usageInfo.tier === "paid"
+                          ? <span>Pro — {usageInfo.dailyUsed} calls today</span>
+                          : <span>{usageInfo.dailyRemaining}/{usageInfo.dailyLimit} free calls left</span>}
+                        {usageInfo.credits > 0 && <div style={{ marginTop: 4 }}>{usageInfo.credits} credits remaining</div>}
+                      </div>
+                    )}
+                    {usageInfo?.tier !== "paid" && (
+                      <button onClick={() => setShowUpgradeModal(true)}
+                        style={{ display: "block", width: "100%", padding: "10px 14px", border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontFamily: MONO, fontSize: 11, color: "#f59e0b", fontWeight: 600, borderBottom: "1px solid #f0ede8" }}
+                        onMouseEnter={e => e.currentTarget.style.background = "#f7f6f3"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        Upgrade to Pro
+                      </button>
+                    )}
+                    {usageInfo?.subscriptionStatus === "active" && (
+                      <button onClick={async () => {
+                        const r = await fetch("/api/stripe/portal", { method: "POST", credentials: "include" });
+                        const { url } = await r.json();
+                        if (url) window.location.href = url;
+                      }}
+                        style={{ display: "block", width: "100%", padding: "10px 14px", border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontFamily: MONO, fontSize: 11, borderBottom: "1px solid #f0ede8" }}
+                        onMouseEnter={e => e.currentTarget.style.background = "#f7f6f3"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        Manage Subscription
+                      </button>
+                    )}
+                    <button onClick={async () => {
+                      await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+                      setCurrentUser(null); setUsageInfo(null); setUseSharedKey(false);
+                      localStorage.removeItem("annotator_use_shared_key");
+                    }}
+                      style={{ display: "block", width: "100%", padding: "10px 14px", border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}
+                      onMouseEnter={e => e.currentTarget.style.background = "#f7f6f3"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      Sign Out
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ position: "relative" }}>
+                <button onClick={() => setShowUserMenu(v => !v)}
+                  style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #10B981", background: "#D1FAE5", cursor: "pointer", fontFamily: MONO, fontSize: 11, color: "#065F46" }}>
+                  Sign In
+                </button>
+                {showUserMenu && (
+                  <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#fff", border: "1px solid #e5e2dc", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.08)", minWidth: 180, zIndex: 1000, fontFamily: MONO, fontSize: 11 }}
+                    onClick={() => setShowUserMenu(false)}>
+                    <a href="/api/auth/github"
+                      style={{ display: "block", padding: "10px 14px", textDecoration: "none", color: "#1a1a1a", borderBottom: "1px solid #f0ede8" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "#f7f6f3"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      Continue with GitHub
+                    </a>
+                    <a href="/api/auth/google"
+                      style={{ display: "block", padding: "10px 14px", textDecoration: "none", color: "#1a1a1a" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "#f7f6f3"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      Continue with Google
+                    </a>
+                  </div>
+                )}
+              </div>
+            )
+          )}
           <button data-tutorial="settings" onClick={() => { setSettingsDraft(aiSettings || { provider: "anthropic", apiKey: "", model: PROVIDERS[0].defaultModel, baseUrl: "" }); setSettingsStatus(""); setShowSettings(true); }}
             title={`AI Provider Settings (${formatHotkey(hotkeys.settings)})`}
             style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${aiSettings ? "#d4d0c8" : "#f59e0b"}`, background: aiSettings ? "transparent" : "#FEF3C7", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
@@ -1302,6 +1382,12 @@ export default function Annotator() {
           </a>
         </div>
       </div>
+
+      {IS_DEPLOYED && !authLoading && !currentUser && (
+        <div style={{ background: "#D1FAE5", padding: "6px 16px", fontFamily: MONO, fontSize: 11, textAlign: "center", color: "#065F46", borderBottom: "1px solid #A7F3D0" }}>
+          Sign in for free AI calls — no API key needed
+        </div>
+      )}
 
       {/* Settings modal */}
       {showSettings && (
