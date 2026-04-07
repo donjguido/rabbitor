@@ -145,17 +145,30 @@ function matchesHotkey(e, hk) {
     && e.ctrlKey === hk.ctrl && e.shiftKey === hk.shift && e.altKey === hk.alt;
 }
 
+const IS_DEPLOYED = !["localhost", "127.0.0.1"].includes(window.location.hostname);
+
+async function aiFetch(url, options) {
+  if (!IS_DEPLOYED) return fetch(url, options);
+  const res = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, headers: options.headers, body: JSON.parse(options.body) }),
+  });
+  return res;
+}
+
 async function callAnthropic(apiKey, model, messages, system, useWebSearch) {
   const body = { model, max_tokens: 1000, system, messages };
   if (useWebSearch) body.tools = [{ type: "web_search_20250305", name: "web_search" }];
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const headers = {
+    "Content-Type": "application/json",
+    "x-api-key": apiKey,
+    "anthropic-version": "2023-06-01",
+  };
+  if (!IS_DEPLOYED) headers["anthropic-dangerous-direct-browser-access"] = "true";
+  const res = await aiFetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
+    headers,
     body: JSON.stringify(body),
   });
   const data = await res.json();
@@ -167,7 +180,7 @@ async function callOpenAICompat(baseUrl, apiKey, model, messages, system) {
   const allMessages = [{ role: "system", content: system }, ...messages];
   const headers = { "Content-Type": "application/json" };
   if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-  const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/v1/chat/completions`, {
+  const res = await aiFetch(`${baseUrl.replace(/\/+$/, "")}/v1/chat/completions`, {
     method: "POST",
     headers,
     body: JSON.stringify({ model, messages: allMessages, max_tokens: 1000 }),
@@ -182,7 +195,7 @@ async function callGemini(apiKey, model, messages, system) {
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }],
   }));
-  const res = await fetch(
+  const res = await aiFetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
     {
       method: "POST",
