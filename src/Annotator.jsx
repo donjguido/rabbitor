@@ -822,7 +822,7 @@ export default function Annotator() {
       const aiMsg = { role: "assistant", content: answer, author: aiName, timestamp: new Date().toISOString() };
       setAnnotations(prev => prev.map(a => a.id === id ? appendToThread(a, sentBranch, aiMsg) : a));
     } catch (err) {
-      const errMsg = { role: "assistant", content: err?.message || "Error getting response.", author: "AI", timestamp: new Date().toISOString() };
+      const errMsg = { role: "assistant", content: err?.message || "Error getting response.", author: "AI", timestamp: new Date().toISOString(), isError: true };
       setAnnotations(prev => prev.map(a => a.id === id ? appendToThread(a, sentBranch, errMsg) : a));
     }
     setLoadingId(null);
@@ -874,7 +874,7 @@ export default function Annotator() {
         const aiMsg = { role: "assistant", content: answer, author: aiName, timestamp: new Date().toISOString() };
         setAnnotations(prev => prev.map(a => a.id === annoId ? appendToThread(a, -1, aiMsg) : a));
       } catch (err) {
-        const errMsg = { role: "assistant", content: err?.message || "Error getting response.", author: "AI", timestamp: new Date().toISOString() };
+        const errMsg = { role: "assistant", content: err?.message || "Error getting response.", author: "AI", timestamp: new Date().toISOString(), isError: true };
         setAnnotations(prev => prev.map(a => a.id === annoId ? appendToThread(a, -1, errMsg) : a));
       }
       setLoadingId(null);
@@ -1262,6 +1262,11 @@ export default function Annotator() {
             style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${aiSettings ? "#d4d0c8" : "#f59e0b"}`, background: aiSettings ? "transparent" : "#FEF3C7", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
             ⚙️{aiSettings ? "" : " Setup AI"}
           </button>
+          <a href="https://github.com/donjguido/annotator" target="_blank" rel="noopener noreferrer"
+            title="View on GitHub"
+            style={{ padding: "5px 8px", borderRadius: 7, border: "1px solid #d4d0c8", display: "flex", alignItems: "center", color: "#1a1a1a", textDecoration: "none", lineHeight: 1 }}>
+            <svg height="16" width="16" viewBox="0 0 16 16" fill="currentColor" style={{ opacity: 0.6 }}><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          </a>
         </div>
       </div>
 
@@ -1311,7 +1316,8 @@ export default function Annotator() {
 
             {IS_DEPLOYED && (settingsDraft.provider === "ollama" || settingsDraft.provider === "custom") && (
               <p style={{ fontSize: 11, fontFamily: MONO, margin: "0 0 12px", lineHeight: 1.5, padding: "8px 10px", borderRadius: 6, background: "#FEF3C7", border: "1px solid #FCD34D" }}>
-                Local providers don't work on the hosted web app — the server can't reach your localhost. Run the app locally instead.
+                Local providers don't work on the hosted web app — the server can't reach your localhost.{" "}
+                <a href="https://github.com/donjguido/annotator#running-locally" target="_blank" rel="noopener noreferrer" style={{ color: "#92400e" }}>Run it locally</a> instead.
               </p>
             )}
 
@@ -1655,14 +1661,20 @@ export default function Annotator() {
                           ) : (
                             <div style={{
                               padding: "8px 12px", borderRadius: 10, maxWidth: "95%",
-                              background: isComment ? "#FEF9C3" : isUser ? c.border + "15" : "#f7f6f3",
-                              border: `1px solid ${isComment ? "#FCD34D" : isUser ? c.border + "30" : "#e8e6e1"}`,
-                              borderLeft: isComment ? "3px solid #F59E0B" : undefined,
+                              background: isComment ? "#FEF9C3" : isUser ? c.border + "15" : msg.isError ? "#FEF2F2" : "#f7f6f3",
+                              border: `1px solid ${isComment ? "#FCD34D" : isUser ? c.border + "30" : msg.isError ? "#FECACA" : "#e8e6e1"}`,
+                              borderLeft: isComment ? "3px solid #F59E0B" : msg.isError ? "3px solid #F87171" : undefined,
                             }}>
                               <p style={{ fontSize: 13, margin: 0, lineHeight: 1.6 }}>
                                 <MessageContent content={msg.content} annotations={annotations} onNavigate={(id) => { setSelectedId(id); setInputText(""); }} />
                               </p>
-                              <div style={{ display: "flex", gap: 4, marginTop: 5 }}>
+                              <div style={{ display: "flex", gap: 4, marginTop: 5, alignItems: "center" }}>
+                                  {msg.isError && (
+                                    <button onClick={() => { setSettingsDraft(aiSettings || { provider: "anthropic", apiKey: "", model: PROVIDERS[0].defaultModel, baseUrl: "" }); setSettingsStatus(""); setShowSettings(true); }}
+                                      style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid #FECACA", background: "#FEE2E2", fontSize: 10, fontFamily: MONO, cursor: "pointer", color: "#b91c1c" }}>
+                                      ⚙️ Open Settings
+                                    </button>
+                                  )}
                                   <button onClick={() => { setEditingNote({ annoId: currentAnno.id, msgIdx: idx }); setEditText(msg.content); }}
                                     style={{ padding: "1px 6px", borderRadius: 3, border: "none", background: "transparent", fontSize: 10, fontFamily: MONO, cursor: "pointer", opacity: 0.2, transition: "opacity 0.15s" }}
                                     onMouseEnter={e => e.target.style.opacity = 0.6} onMouseLeave={e => e.target.style.opacity = 0.2}>edit</button>
