@@ -631,6 +631,14 @@ export default function Annotator() {
       .finally(() => setAuthLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const refreshUsage = useCallback(() => {
+    if (!IS_DEPLOYED || !currentUser) return;
+    fetch("/api/auth/session", { credentials: "include" })
+      .then(r => r.json())
+      .then(data => { if (data.usage) setUsageInfo(data.usage); })
+      .catch(() => {});
+  }, [currentUser]);
+
   const switchMode = (newMode) => {
     if (newMode === mode) return;
     if (docPaneRef.current) scrollPosRef.current[mode] = docPaneRef.current.scrollTop;
@@ -852,9 +860,11 @@ export default function Annotator() {
     try {
       const answer = await callAI(aiSettings, { messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: withContext, useWebSearch: doWebSearch, linkedContext: linked, attachments }, useSharedKey ? { useSharedKey: true } : undefined);
       const aiName = PROVIDERS.find(p => p.id === aiSettings?.provider)?.name?.split(" ")[0] || "AI";
+      if (useSharedKey) refreshUsage();
       const aiMsg = { role: "assistant", content: answer, author: aiName, timestamp: new Date().toISOString() };
       setAnnotations(prev => prev.map(a => a.id === id ? appendToThread(a, sentBranch, aiMsg) : a));
     } catch (err) {
+      if (err?.message?.includes("Daily free limit") || err?.message?.includes("Upgrade")) setShowUpgradeModal(true);
       const errMsg = { role: "assistant", content: err?.message || "Error getting response.", author: "AI", timestamp: new Date().toISOString(), isError: true };
       setAnnotations(prev => prev.map(a => a.id === id ? appendToThread(a, sentBranch, errMsg) : a));
     }
@@ -904,9 +914,11 @@ export default function Annotator() {
       try {
         const answer = await callAI(aiSettings, { messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: editedMsg.withContext || false, useWebSearch: false }, useSharedKey ? { useSharedKey: true } : undefined);
         const aiName = PROVIDERS.find(p => p.id === aiSettings?.provider)?.name?.split(" ")[0] || "AI";
+        if (useSharedKey) refreshUsage();
         const aiMsg = { role: "assistant", content: answer, author: aiName, timestamp: new Date().toISOString() };
         setAnnotations(prev => prev.map(a => a.id === annoId ? appendToThread(a, -1, aiMsg) : a));
       } catch (err) {
+        if (err?.message?.includes("Daily free limit") || err?.message?.includes("Upgrade")) setShowUpgradeModal(true);
         const errMsg = { role: "assistant", content: err?.message || "Error getting response.", author: "AI", timestamp: new Date().toISOString(), isError: true };
         setAnnotations(prev => prev.map(a => a.id === annoId ? appendToThread(a, -1, errMsg) : a));
       }
