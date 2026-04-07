@@ -482,6 +482,7 @@ export default function Annotator() {
     try { return localStorage.getItem("annotator_tutorial_seen") ? null : 0; } catch { return 0; }
   });
   const [tutorialRect, setTutorialRect] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
   const textRef = useRef(null);
   const fileRef = useRef(null);
   const importRef = useRef(null);
@@ -666,6 +667,26 @@ export default function Annotator() {
     } catch (err) { alert(`Could not extract text from ${file.name}: ${err.message}`); }
     setPdfLoading(false);
     if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const handleDocDrop = async (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (doc) return; // only when pane is empty
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    const ext = "." + file.name.split(".").pop().toLowerCase();
+    if (!SUPPORTED_DOC_TYPES.split(",").includes(ext)) {
+      alert(`Unsupported file type: ${ext}`);
+      return;
+    }
+    setPdfLoading(true);
+    try {
+      const text = await extractFileText(file);
+      if (!text.trim()) throw new Error("No text extracted");
+      setDoc(text); setFileName(file.name); setAnnotations([]); setMode("annotate");
+    } catch (err) { alert(`Could not extract text from ${file.name}: ${err.message}`); }
+    setPdfLoading(false);
   };
 
   const handleImport = (e) => {
@@ -1549,7 +1570,24 @@ h1{font-size:1.4em;border-bottom:1px solid #d4d0c8;padding-bottom:.4em}
         {/* Document pane */}
         <div ref={docPaneRef} data-tutorial="doc-pane" style={{ flex: 1, overflowY: "auto", padding: 24, position: "relative" }}>
           {mode === "edit" ? (
-            <div style={{ position: "relative", width: "100%", minHeight: 400 }}>
+            <div
+              style={{ position: "relative", width: "100%", minHeight: 400 }}
+              onDragOver={!doc ? (e) => { e.preventDefault(); setDragOver(true); } : undefined}
+              onDragLeave={!doc ? () => setDragOver(false) : undefined}
+              onDrop={!doc ? handleDocDrop : undefined}
+            >
+              {dragOver && !doc && (
+                <div style={{
+                  position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+                  border: "2px dashed #8a7e6b", borderRadius: 10, background: "rgba(138,126,107,0.08)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  zIndex: 10, pointerEvents: "none",
+                }}>
+                  <span style={{ fontFamily: FONT, fontSize: 16, color: "#8a7e6b", fontWeight: 600 }}>
+                    Drop file to upload
+                  </span>
+                </div>
+              )}
               {/* Backdrop with highlighted annotation regions */}
               {annotations.length > 0 && (
                 <div aria-hidden style={{
