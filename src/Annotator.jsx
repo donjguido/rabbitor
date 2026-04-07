@@ -11,6 +11,39 @@ const COLORS = [
 const FONT = `'Literata', 'Georgia', serif`;
 const MONO = `'JetBrains Mono', 'Fira Code', monospace`;
 
+const TUTORIAL_STEPS = [
+  {
+    title: "Welcome to Annotator",
+    body: "This tool lets you highlight passages in a document and have AI-powered conversations about them. Let\u2019s walk through the basics.",
+    target: null, // centered, no spotlight
+  },
+  {
+    title: "Load your document",
+    body: "Paste text directly into the editor, or click Upload to import a PDF, DOCX, EPUB, or other supported file.",
+    target: "[data-tutorial='upload']",
+  },
+  {
+    title: "Switch to Annotate mode",
+    body: "Once your document is loaded, switch to Annotate mode to start highlighting passages.",
+    target: "[data-tutorial='mode-toggle']",
+  },
+  {
+    title: "Highlight text",
+    body: "Select any text in the document to create a color-coded annotation. Pick a color from the palette, then select text. Overlapping highlights are supported.",
+    target: "[data-tutorial='doc-pane']",
+  },
+  {
+    title: "Ask questions in the sidebar",
+    body: "Click a highlight to open its thread in the sidebar. Ask the AI questions, leave comments with /skip, or use /ctx to include the full document as context.",
+    target: "[data-tutorial='sidebar']",
+  },
+  {
+    title: "Configure your AI provider",
+    body: "Click the settings button to connect your preferred AI \u2014 Anthropic, OpenAI, Gemini, OpenRouter, Ollama, or a custom endpoint.",
+    target: "[data-tutorial='settings']",
+  },
+];
+
 const HINTS = [
   "Select text in the document to create a highlight",
   "Type /skip to leave a comment without asking the AI",
@@ -419,6 +452,10 @@ export default function Annotator() {
   const [hotkeys, setHotkeys] = useState(() => loadHotkeys());
   const [showHotkeySettings, setShowHotkeySettings] = useState(false);
   const [recordingHotkey, setRecordingHotkey] = useState(null); // action key being recorded
+  const [tutorialStep, setTutorialStep] = useState(() => {
+    try { return localStorage.getItem("annotator_tutorial_seen") ? null : 0; } catch { return 0; }
+  });
+  const [tutorialRect, setTutorialRect] = useState(null);
   const textRef = useRef(null);
   const fileRef = useRef(null);
   const importRef = useRef(null);
@@ -493,6 +530,31 @@ export default function Annotator() {
   useEffect(() => {
     if (selectedId != null) setTimeout(() => inputRef.current?.focus(), 80);
   }, [selectedId]);
+
+  // Tutorial spotlight positioning
+  useEffect(() => {
+    if (tutorialStep === null) return;
+    const step = TUTORIAL_STEPS[tutorialStep];
+    if (!step || !step.target) { setTutorialRect(null); return; }
+    const update = () => {
+      const el = document.querySelector(step.target);
+      if (el) {
+        const r = el.getBoundingClientRect();
+        setTutorialRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+      } else {
+        setTutorialRect(null);
+      }
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => { window.removeEventListener("resize", update); window.removeEventListener("scroll", update, true); };
+  }, [tutorialStep]);
+
+  const dismissTutorial = useCallback(() => {
+    setTutorialStep(null);
+    try { localStorage.setItem("annotator_tutorial_seen", "1"); } catch { /* empty */ }
+  }, []);
 
   // Close overlap picker on outside click
   useEffect(() => {
@@ -1153,7 +1215,7 @@ export default function Annotator() {
           <input ref={fileRef} type="file" accept={SUPPORTED_DOC_TYPES} onChange={handleDocUpload} style={{ display: "none" }} />
           <input ref={importRef} type="file" accept=".json" onChange={handleImport} style={{ display: "none" }} />
           <input ref={attachRef} type="file" onChange={handleAttach} style={{ display: "none" }} />
-          <button onClick={() => fileRef.current?.click()} disabled={pdfLoading}
+          <button data-tutorial="upload" onClick={() => fileRef.current?.click()} disabled={pdfLoading}
             style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #d4d0c8", background: pdfLoading ? "#FEF3C7" : "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
             {pdfLoading ? "⏳…" : "📄 Upload"}
           </button>
@@ -1161,7 +1223,7 @@ export default function Annotator() {
             style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #d4d0c8", background: "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
             📥 Import
           </button>
-          <div style={{ display: "flex", borderRadius: 7, overflow: "hidden", border: "1px solid #d4d0c8" }}>
+          <div data-tutorial="mode-toggle" style={{ display: "flex", borderRadius: 7, overflow: "hidden", border: "1px solid #d4d0c8" }}>
             {["edit", "annotate"].map(m => (
               <button key={m} onClick={() => switchMode(m)}
                 title={formatHotkey(hotkeys[m === "edit" ? "editMode" : "annotateMode"])}
@@ -1195,7 +1257,7 @@ export default function Annotator() {
               )}
             </div>
           )}
-          <button onClick={() => { setSettingsDraft(aiSettings || { provider: "anthropic", apiKey: "", model: PROVIDERS[0].defaultModel, baseUrl: "" }); setSettingsStatus(""); setShowSettings(true); }}
+          <button data-tutorial="settings" onClick={() => { setSettingsDraft(aiSettings || { provider: "anthropic", apiKey: "", model: PROVIDERS[0].defaultModel, baseUrl: "" }); setSettingsStatus(""); setShowSettings(true); }}
             title={`AI Provider Settings (${formatHotkey(hotkeys.settings)})`}
             style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${aiSettings ? "#d4d0c8" : "#f59e0b"}`, background: aiSettings ? "transparent" : "#FEF3C7", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
             ⚙️{aiSettings ? "" : " Setup AI"}
@@ -1331,6 +1393,14 @@ export default function Annotator() {
                 </div>
               )}
             </div>
+
+            {/* Replay tutorial */}
+            <div style={{ borderTop: "1px solid #e8e5e0", marginTop: 16, paddingTop: 16 }}>
+              <button onClick={() => { setShowSettings(false); setTutorialStep(0); }}
+                style={{ border: "none", background: "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11, opacity: 0.6, padding: 0 }}>
+                ? Replay Tutorial
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1338,7 +1408,7 @@ export default function Annotator() {
       {/* Body */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }} onClick={() => { showExportMenu && setShowExportMenu(false); }}>
         {/* Document pane */}
-        <div ref={docPaneRef} style={{ flex: 1, overflowY: "auto", padding: 24, position: "relative" }}>
+        <div ref={docPaneRef} data-tutorial="doc-pane" style={{ flex: 1, overflowY: "auto", padding: 24, position: "relative" }}>
           {mode === "edit" ? (
             <div style={{ position: "relative", width: "100%", minHeight: 400 }}>
               {/* Backdrop with highlighted annotation regions */}
@@ -1441,7 +1511,7 @@ export default function Annotator() {
 
         {/* Side pane */}
         {mode === "annotate" && (
-          <div style={{ width: 370, minWidth: 300, borderLeft: "1px solid #e5e2db", background: "#fff", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+          <div data-tutorial="sidebar" style={{ width: 370, minWidth: 300, borderLeft: "1px solid #e5e2db", background: "#fff", display: "flex", flexDirection: "column", flexShrink: 0 }}>
             <div style={{ padding: "10px 16px", borderBottom: "1px solid #e5e2db", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
               <span style={{ fontSize: 12, fontFamily: MONO, fontWeight: 500, opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.04em" }}>
                 {currentAnno ? "Annotation" : `${annotations.length} annotation${annotations.length !== 1 ? "s" : ""}`}
@@ -1719,6 +1789,95 @@ export default function Annotator() {
           </div>
         )}
       </div>
+
+      {/* Tutorial overlay */}
+      {tutorialStep !== null && (() => {
+        const step = TUTORIAL_STEPS[tutorialStep];
+        const pad = 8;
+        const hasTarget = tutorialRect !== null;
+        // Clip-path: full screen with a rectangular hole cut out around the target
+        const clipPath = hasTarget
+          ? `polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, ${tutorialRect.left - pad}px ${tutorialRect.top - pad}px, ${tutorialRect.left - pad}px ${tutorialRect.top + tutorialRect.height + pad}px, ${tutorialRect.left + tutorialRect.width + pad}px ${tutorialRect.top + tutorialRect.height + pad}px, ${tutorialRect.left + tutorialRect.width + pad}px ${tutorialRect.top - pad}px, ${tutorialRect.left - pad}px ${tutorialRect.top - pad}px)`
+          : undefined;
+        // Position popup near target or centered
+        const popupStyle = hasTarget ? (() => {
+          const below = tutorialRect.top + tutorialRect.height + pad + 12;
+          const above = tutorialRect.top - pad - 12;
+          const fitsBelow = below + 200 < window.innerHeight;
+          return {
+            position: "fixed", zIndex: 9999,
+            top: fitsBelow ? below : undefined,
+            bottom: fitsBelow ? undefined : (window.innerHeight - above),
+            left: Math.max(16, Math.min(tutorialRect.left, window.innerWidth - 356)),
+            maxWidth: 340,
+          };
+        })() : {
+          position: "fixed", zIndex: 9999,
+          top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+          maxWidth: 380,
+        };
+        const isLast = tutorialStep === TUTORIAL_STEPS.length - 1;
+        return (
+          <>
+            {/* Backdrop */}
+            <div onClick={dismissTutorial} style={{
+              position: "fixed", inset: 0, zIndex: 9998,
+              background: "rgba(0,0,0,0.45)",
+              clipPath,
+              transition: "clip-path 0.3s ease",
+            }} />
+            {/* Spotlight border ring */}
+            {hasTarget && (
+              <div style={{
+                position: "fixed", zIndex: 9998,
+                top: tutorialRect.top - pad, left: tutorialRect.left - pad,
+                width: tutorialRect.width + pad * 2, height: tutorialRect.height + pad * 2,
+                borderRadius: 8, border: "2px solid rgba(255,255,255,0.6)",
+                pointerEvents: "none", transition: "all 0.3s ease",
+              }} />
+            )}
+            {/* Popup card */}
+            <div style={{
+              ...popupStyle,
+              background: "#fff", borderRadius: 12, padding: "20px 24px",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+              fontFamily: FONT,
+            }}>
+              <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 600, color: "#1a1a1a" }}>{step.title}</h3>
+              <p style={{ margin: "0 0 16px", fontSize: 13, lineHeight: 1.6, color: "#444", opacity: 0.85 }}>{step.body}</p>
+              {/* Step dots */}
+              <div style={{ display: "flex", gap: 6, marginBottom: 16, justifyContent: "center" }}>
+                {TUTORIAL_STEPS.map((_, i) => (
+                  <span key={i} style={{
+                    width: 8, height: 8, borderRadius: "50%",
+                    background: i === tutorialStep ? COLORS[i % COLORS.length].border : "#d4d0c8",
+                    transition: "background 0.2s",
+                  }} />
+                ))}
+              </div>
+              {/* Navigation buttons */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <button onClick={dismissTutorial}
+                  style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #d4d0c8", background: "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11, opacity: 0.6 }}>
+                  Skip
+                </button>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {tutorialStep > 0 && (
+                    <button onClick={() => setTutorialStep(s => s - 1)}
+                      style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #d4d0c8", background: "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
+                      Back
+                    </button>
+                  )}
+                  <button onClick={() => isLast ? dismissTutorial() : setTutorialStep(s => s + 1)}
+                    style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: "#1a1a1a", color: "#fff", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
+                    {isLast ? "Done" : "Next"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
