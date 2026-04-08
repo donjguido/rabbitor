@@ -1,4 +1,4 @@
-# Annotator Wiki
+# Rabbitor Wiki
 
 Welcome to the Annotator wiki — the companion guide for the open-source, AI-powered document annotation tool.
 
