@@ -4,7 +4,17 @@ AI-powered document annotation tool. Highlight passages in any text or PDF, then
 
 ![React](https://img.shields.io/badge/React-19-blue) ![Vite](https://img.shields.io/badge/Vite-6-purple) ![Multi--Provider AI](https://img.shields.io/badge/AI-Multi--Provider-orange)
 
+![Highlight and chat with AI](assets/hero.gif)
+
+## Try it live
+
+**[annotator-ten.vercel.app](https://annotator-ten.vercel.app)**
+
+No install required — just open the link, pick your AI provider in Settings, paste your API key, and start annotating. Your settings and API key stay in your browser's `localStorage` and are never sent to our servers.
+
 ## Features
+
+![Annotator workspace with highlights and AI sidebar](assets/use_display.png)
 
 - **Highlight & Ask** — Select any passage to create a color-coded annotation, then ask AI about it
 - **Overlapping Highlights** — Highlights can overlap; click overlapping text to pick which annotation to view
@@ -24,17 +34,13 @@ AI-powered document annotation tool. Highlight passages in any text or PDF, then
   - `/find` — Search within the document text
   - `/attach` — Attach a file as context for this annotation
 - **Multi-color Highlights** — 5 color options (Lemon, Rose, Sky, Mint, Lilac) with per-annotation color switching
-- **Export** — Copy to clipboard, download as Markdown, or download as JSON
+- **Export** — Copy to clipboard, download as Markdown, HTML, CSV, or JSON
 - **Import/Export JSON** — Save your session (including branches) and pick up where you left off
 - **Usernames** — Set your name for tracked annotations across collaborators
 
 ## Setup
 
-```bash
-git clone https://github.com/donjguido/annotator.git
-cd annotator
-npm install
-```
+The easiest way to get started is the [live site](https://annotator-ten.vercel.app). To run locally, see [Running locally](#running-locally) below.
 
 ### AI Provider
 
@@ -49,19 +55,15 @@ On first launch, the app opens a **Settings** panel (gear icon in the header) wh
 | **Ollama (local)** | Not needed | Runs on `localhost:11434` — no internet required |
 | **Custom (OpenAI-compatible)** | Optional | Any OpenAI-compatible endpoint (LM Studio, vLLM, llama.cpp, etc.) |
 
+![Provider settings panel](assets/provider_settings.png)
+
 Settings are saved to `localStorage` — you only configure once per browser.
 
 > **Local models (Ollama, Custom):** These don't need an API key or internet access. Just make sure your local model server is running before using the app. Web search (`/search`) is unavailable with local models.
 
-### Run
-
-```bash
-npm run dev
-```
-
-Open [http://localhost:5173](http://localhost:5173).
-
 ## Usage
+
+![Importing a document](assets/document_import.gif)
 
 1. **Paste or upload** — Paste text in Edit mode or upload a PDF
 2. **Switch to Annotate** — Click the Annotate toggle
@@ -73,6 +75,12 @@ Open [http://localhost:5173](http://localhost:5173).
 8. **Branch** — Edit a message and click "Branch + Regen" to explore alternate responses
 9. **Export** — Use the Export menu to save your work
 
+![Export options](assets/export_options.png)
+
+## Use as AI context
+
+The entire app lives in a single file — [`src/Annotator.jsx`](src/Annotator.jsx). You can download it and upload it directly to Claude, ChatGPT, or any chat interface that accepts file attachments. This gives the AI full context of the codebase in one shot, making it easy to ask questions about the code, request modifications, or generate patches without any extra setup.
+
 ## Tech Stack
 
 - [React 19](https://react.dev) + [Vite 6](https://vite.dev)
@@ -80,6 +88,23 @@ Open [http://localhost:5173](http://localhost:5173).
 - [PDF.js](https://mozilla.github.io/pdf.js/) for PDF text extraction
 - [Literata](https://fonts.google.com/specimen/Literata) + [JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono) fonts
 - No backend — all API calls made directly from the browser; settings in `localStorage`
+
+## Running locally
+
+If you prefer to run Annotator on your own machine (required for Ollama or other local models):
+
+```bash
+git clone https://github.com/donjguido/annotator.git
+cd annotator
+npm install
+npm run dev
+```
+
+Then open [http://localhost:5173](http://localhost:5173).
+
+## Feedback
+
+Have ideas, feature requests, or found a bug? We'd love to hear from you — please open a thread in [GitHub Discussions](https://github.com/donjguido/annotator/discussions). It's the best way to share feedback, ask questions, or suggest improvements.
 
 ## License
 

@@ -1,7 +1,29 @@
 {
   "name": "annotator",
-  "private": true,
-  "version": "0.0.0",
+  "version": "3.0.0",
+  "description": "Open-source document annotation tool with AI-powered conversations. Highlight passages and discuss them with any AI provider.",
+  "author": "donjguido",
+  "license": "MIT",
+  "homepage": "https://annotator-ten.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/donjguido/annotator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/donjguido/annotator/issues"
+  },
+  "keywords": [
+    "annotation",
+    "document",
+    "ai",
+    "highlights",
+    "pdf",
+    "llm",
+    "react",
+    "openai",
+    "anthropic",
+    "gemini"
+  ],
   "type": "module",
   "scripts": {
     "dev": "vite",
