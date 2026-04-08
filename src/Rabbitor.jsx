@@ -13,8 +13,8 @@ const MONO = `'JetBrains Mono', 'Fira Code', monospace`;
 
 const TUTORIAL_STEPS = [
   {
-    title: "Welcome to Annotator",
-    body: "This tool lets you highlight passages in a document and have AI-powered conversations about them. Let\u2019s walk through the basics.",
+    title: "Welcome to Rabbitor",
+    body: "Go down the rabbit hole of knowledge \u2014 highlight passages in any document and have AI-powered conversations about them. Let\u2019s walk through the basics.",
     target: null, // centered, no spotlight
   },
   {
@@ -162,7 +162,7 @@ const MODEL_OPTIONS = {
   ],
 };
 
-const SETTINGS_KEY = "annotator_ai_settings";
+const SETTINGS_KEY = "rabbitor_ai_settings";
 function loadAISettings() {
   try { const s = JSON.parse(localStorage.getItem(SETTINGS_KEY)); if (s?.provider) return s; } catch {} return null;
 }
@@ -174,7 +174,7 @@ const DEFAULT_HOTKEYS = {
   export: { key: "e", ctrl: true, shift: true, alt: false, label: "Export" },
   settings: { key: ",", ctrl: true, shift: false, alt: false, label: "Settings" },
 };
-const HOTKEYS_KEY = "annotator_hotkeys";
+const HOTKEYS_KEY = "rabbitor_hotkeys";
 function loadHotkeys() {
   try {
     const h = JSON.parse(localStorage.getItem(HOTKEYS_KEY));
@@ -444,7 +444,7 @@ function gatherLinkedContext(text, annotations) {
   return contexts.join("\n\n---\n\n");
 }
 
-export default function Annotator() {
+export default function Rabbitor() {
   const [doc, setDoc] = useState("");
   const [fileName, setFileName] = useState("");
   const [annotations, setAnnotations] = useState([]);
@@ -479,7 +479,7 @@ export default function Annotator() {
   const [showHotkeySettings, setShowHotkeySettings] = useState(false);
   const [recordingHotkey, setRecordingHotkey] = useState(null); // action key being recorded
   const [tutorialStep, setTutorialStep] = useState(() => {
-    try { return localStorage.getItem("annotator_tutorial_seen") ? null : 0; } catch { return 0; }
+    try { return localStorage.getItem("rabbitor_tutorial_seen") ? null : 0; } catch { return 0; }
   });
   const [tutorialRect, setTutorialRect] = useState(null);
   const [dragOver, setDragOver] = useState(false);
@@ -580,7 +580,7 @@ export default function Annotator() {
 
   const dismissTutorial = useCallback(() => {
     setTutorialStep(null);
-    try { localStorage.setItem("annotator_tutorial_seen", "1"); } catch { /* empty */ }
+    try { localStorage.setItem("rabbitor_tutorial_seen", "1"); } catch { /* empty */ }
   }, []);
 
   // Close overlap picker on outside click
@@ -1298,7 +1298,7 @@ h1{font-size:1.4em;border-bottom:1px solid #d4d0c8;padding-bottom:.4em}
       <div style={{ padding: "10px 20px", borderBottom: "1px solid #e5e2db", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, letterSpacing: "-0.02em" }}>Annotator</h1>
+            <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, letterSpacing: "-0.02em" }}>Rabbitor</h1>
             <p style={{ margin: "1px 0 0", fontSize: 11, opacity: 0.45, fontFamily: MONO }}>{fileName ? `📄 ${fileName}` : "paste or upload a document → highlight → ask"}</p>
           </div>
           <div style={{ marginLeft: 8 }}>
@@ -1373,7 +1373,7 @@ h1{font-size:1.4em;border-bottom:1px solid #d4d0c8;padding-bottom:.4em}
             style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${aiSettings ? "#d4d0c8" : "#f59e0b"}`, background: aiSettings ? "transparent" : "#FEF3C7", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
             ⚙️{aiSettings ? "" : " Setup AI"}
           </button>
-          <a href="https://github.com/donjguido/annotator" target="_blank" rel="noopener noreferrer"
+          <a href="https://github.com/donjguido/rabbitor" target="_blank" rel="noopener noreferrer"
             title="View on GitHub"
             style={{ padding: "5px 8px", borderRadius: 7, border: "1px solid #d4d0c8", display: "flex", alignItems: "center", color: "#1a1a1a", textDecoration: "none", lineHeight: 1 }}>
             <svg height="16" width="16" viewBox="0 0 16 16" fill="currentColor" style={{ opacity: 0.6 }}><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
@@ -1455,7 +1455,7 @@ h1{font-size:1.4em;border-bottom:1px solid #d4d0c8;padding-bottom:.4em}
             {IS_DEPLOYED && (settingsDraft.provider === "ollama" || settingsDraft.provider === "custom") && (
               <p style={{ fontSize: 11, fontFamily: MONO, margin: "0 0 12px", lineHeight: 1.5, padding: "8px 10px", borderRadius: 6, background: "#FEF3C7", border: "1px solid #FCD34D" }}>
                 Local providers don't work on the hosted web app — the server can't reach your localhost.{" "}
-                <a href="https://github.com/donjguido/annotator#running-locally" target="_blank" rel="noopener noreferrer" style={{ color: "#92400e" }}>Run it locally</a> instead.
+                <a href="https://github.com/donjguido/rabbitor#running-locally" target="_blank" rel="noopener noreferrer" style={{ color: "#92400e" }}>Run it locally</a> instead.
               </p>
             )}
 
@@ -1554,7 +1554,7 @@ h1{font-size:1.4em;border-bottom:1px solid #d4d0c8;padding-bottom:.4em}
 
             {/* Links */}
             <div style={{ borderTop: "1px solid #e8e5e0", marginTop: 16, paddingTop: 16, display: "flex", gap: 12 }}>
-              <a href="https://github.com/donjguido/annotator/discussions" target="_blank" rel="noopener noreferrer"
+              <a href="https://github.com/donjguido/rabbitor/discussions" target="_blank" rel="noopener noreferrer"
                 title="Feedback & Ideas"
                 style={{ fontFamily: MONO, fontSize: 11, opacity: 0.6, color: "#1a1a1a", textDecoration: "none" }}>
                 💬 Feedback & Ideas

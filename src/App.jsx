@@ -1,7 +1,7 @@
-import Annotator from './Annotator.jsx'
+import Rabbitor from './Rabbitor.jsx'
 
 function App() {
-  return <Annotator />
+  return <Rabbitor />
 }
 
 export default App

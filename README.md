@@ -1,6 +1,6 @@
-# Annotator
+# Rabbitor
 
-AI-powered document annotation tool. Highlight passages in any text or PDF, then ask AI questions about them in threaded conversations. Bring your own provider — works with Anthropic, OpenAI, Google Gemini, OpenRouter, Ollama, or any OpenAI-compatible endpoint.
+Go down the rabbit hole of knowledge — highlight passages in any document, then ask AI questions about them in threaded conversations. Bring your own provider — works with Anthropic, OpenAI, Google Gemini, OpenRouter, Ollama, or any OpenAI-compatible endpoint.
 
 ![React](https://img.shields.io/badge/React-19-blue) ![Vite](https://img.shields.io/badge/Vite-6-purple) ![Multi--Provider AI](https://img.shields.io/badge/AI-Multi--Provider-orange)
 
@@ -8,13 +8,13 @@ AI-powered document annotation tool. Highlight passages in any text or PDF, then
 
 ## Try it live
 
-**[annotator-ten.vercel.app](https://annotator-ten.vercel.app)**
+**[rabbitor.vercel.app](https://rabbitor.vercel.app)**
 
-No install required — just open the link, pick your AI provider in Settings, paste your API key, and start annotating. Your settings and API key stay in your browser's `localStorage` and are never sent to our servers.
+No install required — just open the link, pick your AI provider in Settings, paste your API key, and start exploring. Your settings and API key stay in your browser's `localStorage` and are never sent to our servers.
 
 ## Features
 
-![Annotator workspace with highlights and AI sidebar](assets/use_display.png)
+![Rabbitor workspace with highlights and AI sidebar](assets/use_display.png)
 
 - **Highlight & Ask** — Select any passage to create a color-coded annotation, then ask AI about it
 - **Overlapping Highlights** — Highlights can overlap; click overlapping text to pick which annotation to view
@@ -40,7 +40,7 @@ No install required — just open the link, pick your AI provider in Settings, p
 
 ## Setup
 
-The easiest way to get started is the [live site](https://annotator-ten.vercel.app). To run locally, see [Running locally](#running-locally) below.
+The easiest way to get started is the [live site](https://rabbitor.vercel.app). To run locally, see [Running locally](#running-locally) below.
 
 ### AI Provider
 
@@ -79,7 +79,7 @@ Settings are saved to `localStorage` — you only configure once per browser.
 
 ## Use as AI context
 
-The entire app lives in a single file — [`src/Annotator.jsx`](src/Annotator.jsx). You can download it and upload it directly to Claude, ChatGPT, or any chat interface that accepts file attachments. This gives the AI full context of the codebase in one shot, making it easy to ask questions about the code, request modifications, or generate patches without any extra setup.
+The entire app lives in a single file — [`src/Rabbitor.jsx`](src/Rabbitor.jsx). You can download it and upload it directly to Claude, ChatGPT, or any chat interface that accepts file attachments. This gives the AI full context of the codebase in one shot, making it easy to ask questions about the code, request modifications, or generate patches without any extra setup.
 
 ## Tech Stack
 
@@ -91,11 +91,11 @@ The entire app lives in a single file — [`src/Annotator.jsx`](src/Annotator.js
 
 ## Running locally
 
-If you prefer to run Annotator on your own machine (required for Ollama or other local models):
+If you prefer to run Rabbitor on your own machine (required for Ollama or other local models):
 
 ```bash
-git clone https://github.com/donjguido/annotator.git
-cd annotator
+git clone https://github.com/donjguido/rabbitor.git
+cd rabbitor
 npm install
 npm run dev
 ```
@@ -104,7 +104,7 @@ Then open [http://localhost:5173](http://localhost:5173).
 
 ## Feedback
 
-Have ideas, feature requests, or found a bug? We'd love to hear from you — please open a thread in [GitHub Discussions](https://github.com/donjguido/annotator/discussions). It's the best way to share feedback, ask questions, or suggest improvements.
+Have ideas, feature requests, or found a bug? We'd love to hear from you — please open a thread in [GitHub Discussions](https://github.com/donjguido/rabbitor/discussions). It's the best way to share feedback, ask questions, or suggest improvements.
 
 ## License
 

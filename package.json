@@ -1,16 +1,16 @@
 {
-  "name": "annotator",
+  "name": "rabbitor",
   "version": "3.0.0",
-  "description": "Open-source document annotation tool with AI-powered conversations. Highlight passages and discuss them with any AI provider.",
+  "description": "Go down the rabbit hole of knowledge. Highlight passages in any document and have AI-powered conversations about them with any provider.",
   "author": "donjguido",
   "license": "MIT",
-  "homepage": "https://annotator-ten.vercel.app",
+  "homepage": "https://rabbitor.vercel.app",
   "repository": {
     "type": "git",
-    "url": "https://github.com/donjguido/annotator.git"
+    "url": "https://github.com/donjguido/rabbitor.git"
   },
   "bugs": {
-    "url": "https://github.com/donjguido/annotator/issues"
+    "url": "https://github.com/donjguido/rabbitor/issues"
   },
   "keywords": [
     "annotation",
