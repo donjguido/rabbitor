@@ -136,6 +136,32 @@ const PROVIDERS = [
   { id: "custom", name: "Custom (OpenAI-compatible)", defaultModel: "", defaultUrl: "http://localhost:8000", needsKey: false },
 ];
 
+const MODEL_OPTIONS = {
+  anthropic: [
+    "claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-haiku-4-20250506",
+    "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
+  ],
+  openai: [
+    "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
+    "o4-mini", "o3", "o3-mini", "o1", "o1-mini",
+  ],
+  google: [
+    "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite",
+    "gemini-1.5-pro", "gemini-1.5-flash",
+  ],
+  openrouter: [
+    "anthropic/claude-sonnet-4", "anthropic/claude-haiku-4",
+    "openai/gpt-4o", "openai/o4-mini",
+    "google/gemini-2.5-pro", "google/gemini-2.5-flash",
+    "deepseek/deepseek-r1", "deepseek/deepseek-chat-v3",
+    "meta-llama/llama-4-maverick", "meta-llama/llama-4-scout",
+  ],
+  ollama: [
+    "llama3.2", "llama3.1", "llama3", "mistral", "mixtral",
+    "gemma2", "phi3", "qwen2.5", "deepseek-r1", "command-r",
+  ],
+};
+
 const SETTINGS_KEY = "annotator_ai_settings";
 function loadAISettings() {
   try { const s = JSON.parse(localStorage.getItem(SETTINGS_KEY)); if (s?.provider) return s; } catch {} return null;
@@ -456,6 +482,7 @@ export default function Annotator() {
     try { return localStorage.getItem("annotator_tutorial_seen") ? null : 0; } catch { return 0; }
   });
   const [tutorialRect, setTutorialRect] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
   const textRef = useRef(null);
   const fileRef = useRef(null);
   const importRef = useRef(null);
@@ -640,6 +667,26 @@ export default function Annotator() {
     } catch (err) { alert(`Could not extract text from ${file.name}: ${err.message}`); }
     setPdfLoading(false);
     if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const handleDocDrop = async (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (doc) return; // only when pane is empty
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    const ext = "." + file.name.split(".").pop().toLowerCase();
+    if (!SUPPORTED_DOC_TYPES.split(",").includes(ext)) {
+      alert(`Unsupported file type: ${ext}`);
+      return;
+    }
+    setPdfLoading(true);
+    try {
+      const text = await extractFileText(file);
+      if (!text.trim()) throw new Error("No text extracted");
+      setDoc(text); setFileName(file.name); setAnnotations([]); setMode("annotate");
+    } catch (err) { alert(`Could not extract text from ${file.name}: ${err.message}`); }
+    setPdfLoading(false);
   };
 
   const handleImport = (e) => {
@@ -980,6 +1027,68 @@ export default function Annotator() {
     });
   };
 
+  const exportHTML = () => {
+    if (!annotations.length) return;
+    const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
+    let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Annotations${fileName ? ` — ${esc(fileName)}` : ""}</title>
+<style>body{font-family:Georgia,serif;max-width:720px;margin:2em auto;padding:0 1em;color:#1a1a1a}
+h1{font-size:1.4em;border-bottom:1px solid #d4d0c8;padding-bottom:.4em}
+.anno{margin:1.5em 0;padding:1em;border-radius:8px;border:1px solid #e5e2dc}
+.quote{background:#f7f6f3;padding:.6em 1em;border-radius:6px;font-style:italic;margin:.5em 0}
+.msg{margin:.4em 0;line-height:1.5}.msg b{font-family:monospace;font-size:.9em}
+.branch{margin-left:1.5em;border-left:2px solid #d4d0c8;padding-left:1em;margin-top:.5em}</style></head><body>
+<h1>Annotations${fileName ? ` — ${esc(fileName)}` : ""}</h1>\n`;
+    annotations.forEach((a, i) => {
+      const label = esc(a.name || `Annotation ${i + 1}`);
+      html += `<div class="anno"><h2 style="margin:0 0 .5em">${label} <span style="opacity:.4;font-size:.7em">(${COLORS[a.color].name})</span></h2>\n`;
+      html += `<div class="quote">${esc(a.text)}</div>\n`;
+      a.thread.forEach(m => {
+        const who = esc(m.author || (m.role === "user" ? "User" : "AI"));
+        const time = m.timestamp ? ` <span style="opacity:.4;font-size:.8em">${new Date(m.timestamp).toLocaleString()}</span>` : "";
+        const prefix = m.isComment ? "💬" : m.role === "user" ? "Q" : "A";
+        html += `<div class="msg"><b>${prefix} — ${who}${time}:</b> ${esc(m.content)}</div>\n`;
+      });
+      if (a.branches.length > 0) {
+        html += `<div class="branch"><b>Branches (${a.branches.length})</b>\n`;
+        a.branches.forEach((b, bi) => {
+          html += `<div><b>Branch ${bi + 1}</b> <span style="opacity:.4;font-size:.8em">${new Date(b.createdAt).toLocaleString()}</span>\n`;
+          b.thread.forEach(m => {
+            const who = esc(m.author || (m.role === "user" ? "User" : "AI"));
+            const prefix = m.isComment ? "💬" : m.role === "user" ? "Q" : "A";
+            html += `<div class="msg"><b>${prefix} — ${who}:</b> ${esc(m.content)}</div>\n`;
+          });
+          html += `</div>\n`;
+        });
+        html += `</div>\n`;
+      }
+      html += `</div>\n`;
+    });
+    html += `</body></html>`;
+    downloadFile(html, `annotations${fileName ? "_" + fileName.replace(/\.pdf$/i, "") : ""}.html`, "text/html");
+  };
+
+  const exportCSV = () => {
+    if (!annotations.length) return;
+    const csvEsc = s => `"${String(s).replace(/"/g, '""')}"`;
+    const rows = [["Annotation", "Name", "Color", "Highlighted Text", "Role", "Author", "Message", "Timestamp"].join(",")];
+    annotations.forEach((a, i) => {
+      const label = `#${i + 1}`;
+      const name = a.name || "";
+      const color = COLORS[a.color].name;
+      const text = a.text;
+      if (!a.thread.length) {
+        rows.push([csvEsc(label), csvEsc(name), csvEsc(color), csvEsc(text), "", "", "", ""].join(","));
+      }
+      a.thread.forEach(m => {
+        const role = m.isComment ? "comment" : m.role;
+        const author = m.author || "";
+        const time = m.timestamp ? new Date(m.timestamp).toISOString() : "";
+        rows.push([csvEsc(label), csvEsc(name), csvEsc(color), csvEsc(text), csvEsc(role), csvEsc(author), csvEsc(m.content), csvEsc(time)].join(","));
+      });
+    });
+    downloadFile(rows.join("\n"), `annotations${fileName ? "_" + fileName.replace(/\.pdf$/i, "") : ""}.csv`, "text/csv");
+  };
+
   // Render document text with overlapping highlight support
   const renderText = () => {
     if (!doc) return null;
@@ -1245,10 +1354,12 @@ export default function Annotator() {
                   {[
                     { label: "📋 Copy to clipboard", fn: () => { exportClipboard(); setShowExportMenu(false); } },
                     { label: "📝 Download Markdown", fn: () => { exportMarkdown(); setShowExportMenu(false); } },
+                    { label: "🌐 Download HTML", fn: () => { exportHTML(); setShowExportMenu(false); } },
+                    { label: "📊 Download CSV", fn: () => { exportCSV(); setShowExportMenu(false); } },
                     { label: "📦 Download JSON", fn: () => { exportJSON(); setShowExportMenu(false); } },
-                  ].map((item, i) => (
+                  ].map((item, i, arr) => (
                     <button key={i} onClick={item.fn}
-                      style={{ display: "block", width: "100%", padding: "10px 14px", border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontFamily: MONO, fontSize: 11, borderBottom: i < 2 ? "1px solid #f0ede8" : "none" }}
+                      style={{ display: "block", width: "100%", padding: "10px 14px", border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontFamily: MONO, fontSize: 11, borderBottom: i < arr.length - 1 ? "1px solid #f0ede8" : "none" }}
                       onMouseEnter={e => e.target.style.background = "#f7f6f3"} onMouseLeave={e => e.target.style.background = "transparent"}>
                       {item.label}
                     </button>
@@ -1301,9 +1412,36 @@ export default function Annotator() {
             )}
 
             <label style={{ display: "block", fontSize: 11, fontFamily: MONO, opacity: 0.5, marginBottom: 4, textTransform: "uppercase" }}>Model</label>
-            <input value={settingsDraft.model || ""} onChange={e => { setSettingsDraft(prev => ({ ...prev, model: e.target.value })); setSettingsStatus(""); }}
-              placeholder="Model name"
-              style={{ width: "100%", padding: "8px 10px", fontFamily: MONO, fontSize: 12, border: "1px solid #d4d0c8", borderRadius: 6, marginBottom: 12, outline: "none", boxSizing: "border-box" }} />
+            {(() => {
+              const options = MODEL_OPTIONS[settingsDraft.provider];
+              const isCustomEntry = !options || !options.includes(settingsDraft.model);
+              if (options) {
+                return (
+                  <>
+                    <select value={isCustomEntry ? "__custom__" : settingsDraft.model}
+                      onChange={e => {
+                        if (e.target.value === "__custom__") setSettingsDraft(prev => ({ ...prev, model: "" }));
+                        else setSettingsDraft(prev => ({ ...prev, model: e.target.value }));
+                        setSettingsStatus("");
+                      }}
+                      style={{ width: "100%", padding: "8px 10px", fontFamily: MONO, fontSize: 12, border: "1px solid #d4d0c8", borderRadius: 6, marginBottom: isCustomEntry ? 6 : 12, outline: "none", background: "#fff", boxSizing: "border-box" }}>
+                      {options.map(m => <option key={m} value={m}>{m}</option>)}
+                      <option value="__custom__">Other (type model name)…</option>
+                    </select>
+                    {isCustomEntry && (
+                      <input value={settingsDraft.model || ""} onChange={e => { setSettingsDraft(prev => ({ ...prev, model: e.target.value })); setSettingsStatus(""); }}
+                        placeholder="Enter model name"
+                        style={{ width: "100%", padding: "8px 10px", fontFamily: MONO, fontSize: 12, border: "1px solid #d4d0c8", borderRadius: 6, marginBottom: 12, outline: "none", boxSizing: "border-box" }} />
+                    )}
+                  </>
+                );
+              }
+              return (
+                <input value={settingsDraft.model || ""} onChange={e => { setSettingsDraft(prev => ({ ...prev, model: e.target.value })); setSettingsStatus(""); }}
+                  placeholder="Model name"
+                  style={{ width: "100%", padding: "8px 10px", fontFamily: MONO, fontSize: 12, border: "1px solid #d4d0c8", borderRadius: 6, marginBottom: 12, outline: "none", boxSizing: "border-box" }} />
+              );
+            })()}
 
             {(settingsDraft.provider === "ollama" || settingsDraft.provider === "custom") && (
               <>
@@ -1413,6 +1551,20 @@ export default function Annotator() {
                 ? Replay Tutorial
               </button>
             </div>
+
+            {/* Links */}
+            <div style={{ borderTop: "1px solid #e8e5e0", marginTop: 16, paddingTop: 16, display: "flex", gap: 12 }}>
+              <a href="https://github.com/donjguido/annotator/discussions" target="_blank" rel="noopener noreferrer"
+                title="Feedback & Ideas"
+                style={{ fontFamily: MONO, fontSize: 11, opacity: 0.6, color: "#1a1a1a", textDecoration: "none" }}>
+                💬 Feedback & Ideas
+              </a>
+              <a href="https://ko-fi.com/donjguido" target="_blank" rel="noopener noreferrer"
+                title="Support on Ko-fi"
+                style={{ fontFamily: MONO, fontSize: 11, opacity: 0.6, color: "#1a1a1a", textDecoration: "none" }}>
+                🍩 Support
+              </a>
+            </div>
           </div>
         </div>
       )}
@@ -1422,7 +1574,24 @@ export default function Annotator() {
         {/* Document pane */}
         <div ref={docPaneRef} data-tutorial="doc-pane" style={{ flex: 1, overflowY: "auto", padding: 24, position: "relative" }}>
           {mode === "edit" ? (
-            <div style={{ position: "relative", width: "100%", minHeight: 400 }}>
+            <div
+              style={{ position: "relative", width: "100%", minHeight: 400 }}
+              onDragOver={!doc ? (e) => { e.preventDefault(); setDragOver(true); } : undefined}
+              onDragLeave={!doc ? () => setDragOver(false) : undefined}
+              onDrop={!doc ? handleDocDrop : undefined}
+            >
+              {dragOver && !doc && (
+                <div style={{
+                  position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+                  border: "2px dashed #8a7e6b", borderRadius: 10, background: "rgba(138,126,107,0.08)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  zIndex: 10, pointerEvents: "none",
+                }}>
+                  <span style={{ fontFamily: FONT, fontSize: 16, color: "#8a7e6b", fontWeight: 600 }}>
+                    Drop file to upload
+                  </span>
+                </div>
+              )}
               {/* Backdrop with highlighted annotation regions */}
               {annotations.length > 0 && (
                 <div aria-hidden style={{
