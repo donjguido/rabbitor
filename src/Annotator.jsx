@@ -1373,16 +1373,6 @@ h1{font-size:1.4em;border-bottom:1px solid #d4d0c8;padding-bottom:.4em}
             style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${aiSettings ? "#d4d0c8" : "#f59e0b"}`, background: aiSettings ? "transparent" : "#FEF3C7", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
             ⚙️{aiSettings ? "" : " Setup AI"}
           </button>
-          <a href="https://github.com/donjguido/annotator/discussions" target="_blank" rel="noopener noreferrer"
-            title="Feedback & Ideas"
-            style={{ padding: "5px 8px", borderRadius: 7, border: "1px solid #d4d0c8", display: "flex", alignItems: "center", gap: 4, color: "#1a1a1a", textDecoration: "none", lineHeight: 1, fontFamily: MONO, fontSize: 10, opacity: 0.55 }}>
-            💬 Feedback
-          </a>
-          <a href="https://ko-fi.com/donjguido" target="_blank" rel="noopener noreferrer"
-            title="Support on Ko-fi"
-            style={{ padding: "5px 8px", borderRadius: 7, border: "1px solid #d4d0c8", display: "flex", alignItems: "center", color: "#1a1a1a", textDecoration: "none", lineHeight: 1 }}>
-            🍩
-          </a>
           <a href="https://github.com/donjguido/annotator" target="_blank" rel="noopener noreferrer"
             title="View on GitHub"
             style={{ padding: "5px 8px", borderRadius: 7, border: "1px solid #d4d0c8", display: "flex", alignItems: "center", color: "#1a1a1a", textDecoration: "none", lineHeight: 1 }}>
@@ -1560,6 +1550,20 @@ h1{font-size:1.4em;border-bottom:1px solid #d4d0c8;padding-bottom:.4em}
                 style={{ border: "none", background: "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11, opacity: 0.6, padding: 0 }}>
                 ? Replay Tutorial
               </button>
+            </div>
+
+            {/* Links */}
+            <div style={{ borderTop: "1px solid #e8e5e0", marginTop: 16, paddingTop: 16, display: "flex", gap: 12 }}>
+              <a href="https://github.com/donjguido/annotator/discussions" target="_blank" rel="noopener noreferrer"
+                title="Feedback & Ideas"
+                style={{ fontFamily: MONO, fontSize: 11, opacity: 0.6, color: "#1a1a1a", textDecoration: "none" }}>
+                💬 Feedback & Ideas
+              </a>
+              <a href="https://ko-fi.com/donjguido" target="_blank" rel="noopener noreferrer"
+                title="Support on Ko-fi"
+                style={{ fontFamily: MONO, fontSize: 11, opacity: 0.6, color: "#1a1a1a", textDecoration: "none" }}>
+                🍩 Support
+              </a>
             </div>
           </div>
         </div>
